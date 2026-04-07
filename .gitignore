@@ -1,0 +1,47 @@
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.python-version
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# --- ESP-IDF / CMake / Build outputs ---
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.bak
+dependencies.lock
+
+# ESP-IDF managed components are reproducible via idf.py / idf_component.yml
+managed_components/
+
+# --- ShellOS Imager build outputs ---
+imager/build/
+imager/dist/
+imager/*.spec
+imager/.venv/
+
+# --- Logs / temporary artifacts ---
+*.log
+*.tmp
+
+# --- ShellOS build artifacts ---
+*.shpkg

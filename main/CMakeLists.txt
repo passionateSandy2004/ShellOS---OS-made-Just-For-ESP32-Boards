@@ -1,0 +1,19 @@
+idf_component_register(
+    SRCS
+        "main.c"
+    INCLUDE_DIRS
+        "."
+        "../components/shell"
+        "../components/drivers"
+        "../components/fs"
+    REQUIRES
+        driver
+        esp_system
+        esp_wifi
+        nvs_flash
+        spi_flash
+        heap
+        freertos
+        log
+        components
+)
