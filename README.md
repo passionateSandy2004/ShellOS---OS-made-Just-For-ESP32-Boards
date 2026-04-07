@@ -7,6 +7,7 @@
 **Shell. WiFi. Filesystem. Packages. Lua runtime. TCP remote shell. Camera. HTTP API.**  
 **All running on an ESP32 — built entirely from scratch, no Arduino, no Linux.**
 
+[![Build](https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/actions/workflows/build.yml/badge.svg)](https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20ESP32--C6-blue)](https://www.espressif.com/)
 [![Built with ESP-IDF](https://img.shields.io/badge/Built%20with-ESP--IDF%20v5.5-orange)](https://docs.espressif.com/projects/esp-idf/)
@@ -642,6 +643,33 @@ The port to **ESP32-C6 (RISC-V)** demonstrates real cross-architecture challenge
 
 ### For hobbyists
 It's a **$5 chip that you remote-shell into, deploy apps to over WiFi, and use as a tiny Linux-like computer** — except it boots in 2 seconds, runs for days on a power bank, and you built the whole OS yourself.
+
+---
+
+## Current Limitations
+
+ShellOS is an early-stage project. It works, but be honest about what it is:
+
+- **No hardware memory protection** — there is no MMU on ESP32. A misbehaving package can corrupt memory and crash the whole system. Lua cooperative scheduling means a package that loops without yielding can starve other tasks.
+- **Lua sandbox is cooperative, not enforced** — packages run in the same address space. Isolation is by convention, not hardware.
+- **`.ino` transpiler supports a subset of Arduino C** — basic GPIO, `delay`, `Serial.print`, `setup()`/`loop()` are supported. Complex sketches with class hierarchies, templates, or Arduino-specific libraries will need manual porting to Lua.
+- **No OTA update for the OS image itself** — packages deploy wirelessly, but updating the ShellOS OS image still requires a USB flash.
+- **Camera on ESP32-CAM only** — ESP32-C6 and other boards without OV2640 hardware get a stub driver. Camera features are silently unavailable.
+- **WiFi only, no BLE** — Bluetooth Low Energy is not yet wired into the shell or package API.
+- **Early stage** — expect rough edges, missing error messages, and incomplete command coverage. Issues and PRs very welcome.
+
+---
+
+## Tested On
+
+| Board | ESP-IDF | Flash result | WiFi | TCP Shell | Packages |
+|---|---|---|---|---|---|
+| ESP32-CAM (AI Thinker) | v5.5 | ✅ | ✅ | ✅ | ✅ |
+| Seeed XIAO ESP32-C6 | v5.5 | ✅ | ✅ | ✅ | ✅ |
+
+> Tested on **JioFiber WPA2 router (India)** — 2.4 GHz band. Both boards connect headlessly (no serial monitor required) after the non-blocking USB-JTAG console fix.
+>
+> If you test on other hardware, please open an issue or PR to add your board to this table.
 
 ---
 
