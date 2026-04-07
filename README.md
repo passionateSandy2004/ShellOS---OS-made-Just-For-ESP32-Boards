@@ -11,7 +11,7 @@
 [![Platform](https://img.shields.io/badge/Platform-ESP32%20%7C%20ESP32--C6-blue)](https://www.espressif.com/)
 [![Built with ESP-IDF](https://img.shields.io/badge/Built%20with-ESP--IDF%20v5.5-orange)](https://docs.espressif.com/projects/esp-idf/)
 [![Lua](https://img.shields.io/badge/Lua-5.4-blueviolet)](https://www.lua.org/)
-[![Stars](https://img.shields.io/github/stars/yourusername/shellos?style=social)](https://github.com/yourusername/shellos)
+[![Stars](https://img.shields.io/github/stars/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards?style=social)](https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards)
 
 </div>
 
