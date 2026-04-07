@@ -1,13 +1,6 @@
 <div align="center">
 
-```
-███████╗██╗  ██╗███████╗██╗     ██╗      ██████╗ ███████╗
-██╔════╝██║  ██║██╔════╝██║     ██║     ██╔═══██╗██╔════╝
-███████╗███████║█████╗  ██║     ██║     ██║   ██║███████╗
-╚════██║██╔══██║██╔══╝  ██║     ██║     ██║   ██║╚════██║
-███████║██║  ██║███████╗███████╗███████╗╚██████╔╝███████║
-╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝ ╚═════╝ ╚══════╝
-```
+<img src="Images/Screenshot%202026-04-07%20154442.png" alt="ShellOS Boot" width="720"/>
 
 # ShellOS — A Real Operating System for a $5 Microcontroller
 
@@ -122,6 +115,8 @@ nc 192.168.1.42 2323
 ```
 
 That's it. You're inside the ShellOS shell from your PC — no USB, no serial adapter. Full interactive terminal. Same commands. Same filesystem. Same package control. From anywhere on the network.
+
+<img src="Images/image.png" alt="ShellOS running — WiFi connected, TCP shell, HTTP API live" width="720"/>
 
 ```
 ShellOS /root > sysinfo
@@ -361,6 +356,8 @@ nc 192.168.1.42 2323
 ```
 
 You now have a **real interactive shell** running inside your $5 chip.
+
+<img src="Images/image.png" alt="ShellOS full boot — WiFi connected, TCP shell on :2323, HTTP API on :8080" width="720"/>
 
 ---
 
