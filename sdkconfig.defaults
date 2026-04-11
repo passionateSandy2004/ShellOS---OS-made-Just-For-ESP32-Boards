@@ -6,19 +6,30 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 
-# UART console
+# ── UART console ─────────────────────────────────────────────────────────────
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_UART_NUM=0
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 
-# WiFi
+# ── WiFi ─────────────────────────────────────────────────────────────────────
+# Generous RX + dynamic TX buffers so package uploads never stall
 CONFIG_ESP_WIFI_ENABLED=y
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
-CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
 
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# ── FreeRTOS ──────────────────────────────────────────────────────────────────
+# 1 kHz tick → 1 ms resolution for timeouts, vTaskDelay, select()
+CONFIG_FREERTOS_HZ=1000
 
-# Partition — factory app + LittleFS (see partitions.csv)
+# ── Main task ─────────────────────────────────────────────────────────────────
+# app_main does NVS init + kernel_boot (FS mount, WiFi autoconnect) before
+# spawning shell_task — give it enough headroom.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+
+# ── Partition — factory app + LittleFS (see partitions.csv) ──────────────────
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"

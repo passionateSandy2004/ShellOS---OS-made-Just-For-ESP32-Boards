@@ -119,30 +119,35 @@ static esp_err_t handler_upload(httpd_req_t *req)
 
 /* ─────────────────────────────────────────
    GET /pkg/list
-   Returns JSON array of installed packages with running status
+   Returns JSON array of installed packages with running status.
+
+   Uses chunked transfer so there is no fixed-size JSON buffer that can
+   overflow when many packages are installed.  Each package entry is sent
+   as its own chunk; the pkg_list text buffer is heap-allocated so it can
+   hold a large list without eating task-stack space.
    ───────────────────────────────────────── */
 static esp_err_t handler_list(httpd_req_t *req)
 {
-    /* Use pkg_list to get text, then format as JSON */
-    char text[1024];
-    pkg_list(text, sizeof(text));
+    /* Heap-allocate the text buffer — goes to PSRAM on ESP32-CAM */
+    const size_t TEXT_CAP = 4096;
+    char *text = malloc(TEXT_CAP);
+    if (!text) return send_err(req, 500, "OOM");
+    pkg_list(text, TEXT_CAP);
 
-    /* Build JSON array by parsing the text lines */
-    char json[2048];
-    int jpos = 0;
-    jpos += snprintf(json + jpos, sizeof(json) - (size_t)jpos, "[");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    /* Stream each JSON entry as a separate chunk — no size limit */
+    httpd_resp_send_chunk(req, "[", 1);
 
     char *line = strtok(text, "\n");
     bool first = true;
     while (line) {
-        /* Skip leading spaces */
         while (*line == ' ') line++;
         if (*line == '\0' || *line == '(') { line = strtok(NULL, "\n"); continue; }
 
-        /* Parse: name  version  [status] */
         char pname[PKG_NAME_MAX] = {0}, pver[24] = {0}, pstat[16] = {0};
         sscanf(line, "%31s v%23s %15s", pname, pver, pstat);
-
         bool running = (strstr(pstat, "running") != NULL);
 
         /* Read description from manifest */
@@ -160,23 +165,40 @@ static esp_err_t handler_list(httpd_req_t *req)
                 dp = strchr(dp, ':');
                 if (dp) {
                     dp++;
-                    while (*dp == ' ' || *dp == '"') dp++;
-                    char *ep = strchr(dp, '"');
-                    if (ep) { size_t dl = (size_t)(ep - dp); if (dl >= sizeof(pdesc)) dl = sizeof(pdesc)-1; memcpy(pdesc, dp, dl); pdesc[dl] = '\0'; }
+                    while (*dp == ' ' || *dp == '\t') dp++;
+                    /* One opening " then value until closing " (do not skip both quotes of "") */
+                    if (*dp == '"') {
+                        dp++;
+                        char *ep = strchr(dp, '"');
+                        if (ep) {
+                            size_t dl = (size_t)(ep - dp);
+                            if (dl >= sizeof(pdesc)) dl = sizeof(pdesc) - 1;
+                            memcpy(pdesc, dp, dl);
+                            pdesc[dl] = '\0';
+                        }
+                    }
                 }
             }
         }
 
-        if (!first) jpos += snprintf(json + jpos, sizeof(json) - (size_t)jpos, ",");
-        jpos += snprintf(json + jpos, sizeof(json) - (size_t)jpos,
-                         "{\"name\":\"%s\",\"version\":\"%s\",\"running\":%s,\"description\":\"%s\"}",
-                         pname, pver, running ? "true" : "false", pdesc);
+        /* One entry per chunk — 256 bytes is always enough for a single entry */
+        char entry[256];
+        int elen = snprintf(entry, sizeof(entry),
+                            "%s{\"name\":\"%s\",\"version\":\"%s\","
+                            "\"running\":%s,\"description\":\"%s\"}",
+                            first ? "" : ",",
+                            pname, pver,
+                            running ? "true" : "false",
+                            pdesc);
+        if (elen > 0) httpd_resp_send_chunk(req, entry, (size_t)elen);
         first = false;
         line = strtok(NULL, "\n");
     }
-    jpos += snprintf(json + jpos, sizeof(json) - (size_t)jpos, "]");
 
-    return send_json(req, 200, json, (size_t)jpos);
+    free(text);
+    httpd_resp_send_chunk(req, "]", 1);
+    httpd_resp_send_chunk(req, NULL, 0);   /* end chunked response */
+    return ESP_OK;
 }
 
 /* ─────────────────────────────────────────
@@ -243,11 +265,12 @@ esp_err_t http_upload_server_start(void)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port         = HTTP_UPLOAD_PORT;
-    cfg.max_uri_handlers    = 10;
-    cfg.stack_size          = 8192;
-    cfg.recv_wait_timeout   = 30;
-    cfg.send_wait_timeout   = 30;
+    cfg.max_uri_handlers    = 6;   /* exactly how many routes we register */
+    cfg.stack_size          = 8192; /* handler does JSON build + chunk malloc — needs the room */
+    cfg.recv_wait_timeout   = 10;
+    cfg.send_wait_timeout   = 10;
     cfg.uri_match_fn        = httpd_uri_match_wildcard;
+    cfg.lru_purge_enable    = true; /* recycle stale sockets automatically */
 
     esp_err_t err = httpd_start(&_server, &cfg);
     if (err != ESP_OK) {

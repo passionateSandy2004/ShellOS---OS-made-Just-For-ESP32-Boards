@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -136,7 +137,14 @@ esp_err_t netsh_server_start(uint16_t port)
     s_bind_port = (port == 0) ? NETSH_DEFAULT_PORT : port;
     s_stop      = false;
 
-    BaseType_t ok = xTaskCreate(netsh_server_task, "netsh_srv", 8192, NULL, 5, &s_task_handle);
+    /* 16 KB stack: task runs full command dispatch (same as shell_task).
+     * Pin to Core 0 so it shares the core with the WiFi driver — socket
+     * callbacks need no cross-core sync and interrupt latency is minimal. */
+#if CONFIG_FREERTOS_UNICORE
+    BaseType_t ok = xTaskCreate(netsh_server_task, "netsh_srv", 16384, NULL, 5, &s_task_handle);
+#else
+    BaseType_t ok = xTaskCreatePinnedToCore(netsh_server_task, "netsh_srv", 16384, NULL, 5, &s_task_handle, 0);
+#endif
     if (ok != pdPASS) {
         s_task_handle = NULL;
         return ESP_FAIL;

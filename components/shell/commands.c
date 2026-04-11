@@ -3,6 +3,7 @@
 #include "kernel.h"
 #include "shell_io.h"
 #include "netsh_server.h"
+#include "http_upload.h"
 #include "http_fetch.h"
 #include "wifi_driver.h"
 #include "esp_err.h"
@@ -360,12 +361,22 @@ static void cmd_wifi(int argc, char **argv)
                     shell_io_printf("  " THEME_TAG_OK " " TERM_FG_MAGENTA "TCP" TERM_RESET " shell " TERM_FG_NEON_CYAN ":%u" TERM_RESET "\r\n", (unsigned)NETSH_DEFAULT_PORT);
                 }
             }
+            /* Same as boot-time autoconnect: Imager / curl use HTTP :8080, not only TCP :2323 */
+            {
+                esp_err_t herr = http_upload_server_start();
+                if (herr == ESP_OK) {
+                    shell_io_printf("  " THEME_TAG_OK " " TERM_FG_CYAN "HTTP" TERM_RESET " Package API " TERM_FG_NEON_CYAN ":%u" TERM_RESET "\r\n", (unsigned)HTTP_UPLOAD_PORT);
+                } else if (herr != ESP_ERR_INVALID_STATE) {
+                    shell_io_printf("  " THEME_TAG_WARN " HTTP Package API failed: %s\r\n", esp_err_to_name(herr));
+                }
+            }
             shell_io_println("");
         } else {
             shell_io_printf("  " THEME_TAG_FAIL " " TERM_FG_RED "Could not connect." TERM_RESET " Check SSID/password.\r\n\r\n");
         }
     }
     else if (strcmp(argv[1], "disconnect") == 0) {
+        http_upload_server_stop();
         netsh_server_stop();
         wifi_driver_disconnect();
         shell_io_println("\r\n  Disconnected.\r\n");

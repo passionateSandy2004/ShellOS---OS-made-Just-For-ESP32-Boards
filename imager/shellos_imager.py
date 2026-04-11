@@ -27,8 +27,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
-    QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -56,26 +54,73 @@ APP_NAME = "ShellOS Imager"
 APP_VERSION = "1.0"
 
 # Layout: generous spacing (Raspberry Pi Imager–style)
-UI_WIN_MIN_W = 840
-UI_WIN_MIN_H = 680
-UI_WIN_DEFAULT_W = 980
-UI_WIN_DEFAULT_H = 780
+UI_WIN_MIN_W  = 880
+UI_WIN_MIN_H  = 760
+UI_WIN_DEFAULT_W = 1020
+UI_WIN_DEFAULT_H = 900
 UI_MARGIN_OUTER = 28
 UI_MARGIN_TAB = 26
 UI_SPACING_MAJOR = 24
 UI_SPACING_BLOCK = 18
 UI_FORM_LABEL_W = 168
 
-# Must match build/flash_args in the ShellOS ESP-IDF project
-FLASH_LAYOUT: list[tuple[int, str]] = [
-    (0x1000, "bootloader.bin"),
-    (0x8000, "partition-table.bin"),
-    (0x10000, "esp32_shell_os.bin"),
-]
-FLASH_MODE = "dio"
-FLASH_FREQ = "80m"
-FLASH_SIZE = "4MB"
-CHIP = "esp32"
+class FlashTarget:
+    def __init__(
+        self,
+        *,
+        id: str,
+        label: str,
+        chip: str,
+        flash_mode: str,
+        flash_freq: str,
+        flash_size: str,
+        layout: list[tuple[int, str]],
+        fw_subdir: str,
+    ) -> None:
+        self.id = id
+        self.label = label
+        self.chip = chip
+        self.flash_mode = flash_mode
+        self.flash_freq = flash_freq
+        self.flash_size = flash_size
+        self.layout = layout
+        self.fw_subdir = fw_subdir
+
+
+# Must match build/flash_args in the ShellOS ESP-IDF project.
+# Each board target has its own firmware folder under imager/firmware/<target>/.
+FLASH_TARGETS: dict[str, FlashTarget] = {
+    "esp32-cam": FlashTarget(
+        id="esp32-cam",
+        label="ESP32-CAM",
+        chip="esp32",
+        flash_mode="dio",
+        flash_freq="80m",
+        flash_size="4MB",
+        layout=[
+            (0x1000, "bootloader.bin"),
+            (0x8000, "partition-table.bin"),
+            (0x10000, "esp32_shell_os.bin"),
+        ],
+        fw_subdir="esp32-cam",
+    ),
+    "esp32-c6": FlashTarget(
+        id="esp32-c6",
+        label="ESP32-C6",
+        chip="esp32c6",
+        flash_mode="dio",
+        flash_freq="80m",
+        flash_size="4MB",
+        layout=[
+            (0x0,     "bootloader.bin"),      # ESP32-C6 bootloader lives at 0x0 (not 0x1000)
+            (0x8000,  "partition-table.bin"),
+            (0x10000, "esp32_shell_os.bin"),
+        ],
+        fw_subdir="esp32-c6",
+    ),
+}
+
+DEFAULT_FLASH_TARGET_ID = "esp32-cam"
 DEFAULT_BAUD = "460800"
 # Same as SHELL_UART_BAUD in firmware (components/drivers/uart_driver.h)
 MONITOR_BAUD = 115200
@@ -349,16 +394,6 @@ class AnsiParser:
         return (segments, clear)
 
 
-# Shown after a successful flash — ShellOS uses UART0 @ 115200 and netsh @ 2323 when WiFi is up.
-MONITOR_HELP = (
-    "How to use the shell:\n"
-    "• USB: this app opens a serial monitor @ 115200 (like idf.py monitor). "
-    "You can also use PuTTY, Arduino Serial Monitor, etc.\n"
-    "• Wi‑Fi: after the board joins your network, raw TCP to its IP on port 2323 "
-    "(PuTTY “Raw”, or: nc <ip> 2323)."
-)
-
-
 def is_release_bundle() -> bool:
     """True when running as a PyInstaller build (firmware is bundled under _MEIPASS)."""
     return bool(getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"))
@@ -470,7 +505,14 @@ class _SerialMonitorThread(QThread):
 class SerialMonitorDialog(QDialog):
     """Built-in serial monitor (same role as `idf.py monitor` for this port)."""
 
-    def __init__(self, port: str, baud: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        port: str,
+        baud: int,
+        parent: QWidget | None = None,
+        *,
+        show_wifi_setup_hint: bool = False,
+    ) -> None:
         super().__init__(parent)
         self._port = port
         self._baud = baud
@@ -484,10 +526,51 @@ class SerialMonitorDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(14)
-        hint = QLabel(f"USB serial @ {baud} baud · type commands and press Enter (like ESP-IDF monitor)")
-        hint.setStyleSheet("color: #64748b; font-size: 13px;")
+        hint = QLabel(
+            f"USB serial @ {baud} baud — type shell commands below and press Enter or click Send."
+            + (
+                " After a fresh flash, use the Wi‑Fi box under this line first."
+                if show_wifi_setup_hint
+                else ""
+            )
+        )
+        hint.setObjectName("serialTopHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
+
+        if show_wifi_setup_hint:
+            tip = QFrame()
+            tip.setObjectName("serialWifiTip")
+            tl = QVBoxLayout(tip)
+            tl.setContentsMargins(14, 12, 14, 12)
+            tl.setSpacing(8)
+            tip_title = QLabel("Wi‑Fi setup (first boot)")
+            tip_title.setObjectName("serialWifiTipTitle")
+            tip_body = QLabel(
+                "<p style='margin:0 0 8px 0;'>Connect ShellOS to your router so you can use the "
+                "<b>Packages</b> tab and TCP shell over the network.</p>"
+                "<p style='margin:0 0 6px 0;'><b>Type these in the command box at the bottom</b> "
+                "(replace with your real SSID and password):</p>"
+                "<p style='margin:0; font-family: Consolas, monospace; font-size: 12px; line-height: 1.5;'>"
+                "<span style='color:#0d9488'>wifi scan</span><br>"
+                "<span style='color:#0d9488'>wifi connect</span> <i>YourSSID</i> <i>YourPassword</i><br>"
+                "<span style='color:#0d9488'>wifi status</span>"
+                "</p>"
+                "<p style='margin:10px 0 0 0; color:#64748b; font-size:12px;'>"
+                "If you see a connection error: use 2.4&nbsp;GHz Wi‑Fi, check the password, or edit "
+                "<code>config/wifi.cfg</code> on the device (LittleFS)."
+                "</p>"
+                "<p style='margin:10px 0 0 0; color:#334155; font-size:12px;'>"
+                "After Wi‑Fi works: remote shell on TCP port <b>2323</b> (PuTTY <i>Raw</i>); "
+                "package manager HTTP on port <b>8080</b>."
+                "</p>"
+            )
+            tip_body.setTextFormat(Qt.TextFormat.RichText)
+            tip_body.setWordWrap(True)
+            tip_body.setOpenExternalLinks(False)
+            tl.addWidget(tip_title)
+            tl.addWidget(tip_body)
+            layout.addWidget(tip)
 
         self.out = QTextEdit()
         self.out.setReadOnly(True)
@@ -535,9 +618,8 @@ class SerialMonitorDialog(QDialog):
         layout.addWidget(self.out, stretch=1)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Send"))
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Shell command…")
+        self.input.setPlaceholderText("Shell command…  (e.g. wifi scan, help)")
         self.input.returnPressed.connect(self._send_line)
         row.addWidget(self.input, stretch=1)
         btn_send = QPushButton("Send")
@@ -555,6 +637,17 @@ class SerialMonitorDialog(QDialog):
             """
             QDialog { background-color: #f8fafc; color: #0f172a; }
             QLabel { color: #475569; font-size: 13px; }
+            QLabel#serialTopHint { color: #64748b; font-size: 13px; }
+            QFrame#serialWifiTip {
+                background-color: #ecfdf5;
+                border: 1px solid #6ee7b7;
+                border-radius: 10px;
+            }
+            QLabel#serialWifiTipTitle {
+                color: #065f46;
+                font-size: 14px;
+                font-weight: 700;
+            }
             QLineEdit {
                 background-color: #ffffff;
                 color: #0f172a;
@@ -672,7 +765,12 @@ class ShellOSImager(QWidget):
         super().__init__()
         self._invoke_main.connect(self._on_invoke_main)
         self._release = is_release_bundle()
-        self._fw_dir = firmware_base_dir()
+        self._settings = QSettings("ShellOS", "Imager")
+        saved_target = str(self._settings.value("flash/target", DEFAULT_FLASH_TARGET_ID) or "")
+        if saved_target not in FLASH_TARGETS:
+            saved_target = DEFAULT_FLASH_TARGET_ID
+        self._flash_target_id = saved_target
+        self._fw_dir = self._default_fw_dir_for_target(self._flash_target_id)
         self._process: QProcess | None = None
         self._monitor_dialog: SerialMonitorDialog | None = None
         self._last_flash_port: str | None = None
@@ -700,6 +798,56 @@ class ShellOSImager(QWidget):
             lab.setContentsMargins(0, 0, 8, 0)
         return lab
 
+    def _active_flash_target(self) -> FlashTarget:
+        return FLASH_TARGETS.get(self._flash_target_id, FLASH_TARGETS[DEFAULT_FLASH_TARGET_ID])
+
+    def _default_fw_dir_for_target(self, target_id: str) -> Path:
+        t = FLASH_TARGETS.get(target_id, FLASH_TARGETS[DEFAULT_FLASH_TARGET_ID])
+        return firmware_base_dir() / t.fw_subdir
+
+    def _firmware_dir_candidates(self) -> list[Path]:
+        """
+        Directories to search for .bin files, in priority order.
+        Supports legacy layout: bins directly under imager/firmware/ (ESP32-CAM only).
+        """
+        t = self._active_flash_target()
+        base = firmware_base_dir()
+        out: list[Path] = []
+        seen: set[str] = set()
+
+        def add(p: Path) -> None:
+            key = str(p.resolve())
+            if key not in seen:
+                seen.add(key)
+                out.append(p)
+
+        add(self._fw_dir)
+        add(base / t.fw_subdir)
+        if t.id == "esp32-cam":
+            add(base)
+        return out
+
+    def _resolved_fw_dir(self) -> Path | None:
+        """First candidate directory that contains all required .bin files, or None."""
+        t = self._active_flash_target()
+        for d in self._firmware_dir_candidates():
+            if all((d / name).is_file() for _, name in t.layout):
+                return d
+        return None
+
+    def _set_flash_target(self, target_id: str) -> None:
+        if target_id not in FLASH_TARGETS:
+            target_id = DEFAULT_FLASH_TARGET_ID
+        if target_id == self._flash_target_id:
+            return
+        self._flash_target_id = target_id
+        self._settings.setValue("flash/target", target_id)
+        saved = str(self._settings.value(f"flash/fw_dir/{target_id}", "") or "")
+        self._fw_dir = Path(saved) if saved else self._default_fw_dir_for_target(target_id)
+        if getattr(self, "lbl_fw_path", None) is not None:
+            self._sync_fw_path_label()
+        self._update_firmware_status()
+
     def _build_ui(self) -> None:
         self.setWindowTitle(f"{APP_NAME}  ·  v{APP_VERSION}")
         self.setMinimumSize(UI_WIN_MIN_W, UI_WIN_MIN_H)
@@ -719,7 +867,7 @@ class ShellOSImager(QWidget):
         subtitle = QLabel(
             "Plug in your board, choose the port, then flash — firmware is included."
             if self._release
-            else "Flash firmware or manage Wi‑Fi packages on your ESP32-CAM — clear layout, ShellOS teal accents."
+            else "Flash firmware or manage Wi‑Fi packages on your ESP32 boards — clean layout, ShellOS teal accents."
         )
         subtitle.setObjectName("subtitle")
         subtitle.setWordWrap(True)
@@ -741,95 +889,165 @@ class ShellOSImager(QWidget):
 
     # ── Flash tab ────────────────────────────────────────────────────────────
 
+    def _flash_field_label(self, text: str) -> QLabel:
+        """Compact left label for flash rows (avoid wide form labels + grid column bugs)."""
+        w = QLabel(text)
+        w.setObjectName("flashFieldLabel")
+        w.setFixedWidth(118)
+        w.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        return w
+
     def _build_flash_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        """
+        Flash UI: one scroll area wraps the whole tab (setup, status, log, button, hints)
+        so sections never overlap and short windows scroll instead of clipping.
+        """
+        outer = QWidget()
+        outer_lay = QVBoxLayout(outer)
+        outer_lay.setContentsMargins(0, 4, 0, 8)
+        outer_lay.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("flashTabScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
         layout.setSpacing(UI_SPACING_MAJOR)
-        layout.setContentsMargins(UI_MARGIN_TAB, UI_MARGIN_TAB, UI_MARGIN_TAB, UI_MARGIN_TAB)
+        layout.setContentsMargins(4, 8, 10, 24)
+        scroll.setWidget(inner)
+        outer_lay.addWidget(scroll, stretch=1)
 
-        grp_serial = QGroupBox("USB serial")
-        grp_serial.setObjectName("pkgGroup")
-        sl = QVBoxLayout(grp_serial)
-        sl.setSpacing(18)
-        sl.setContentsMargins(4, 2, 4, 4)
+        ctrl_h = 42
 
-        ctrl_h = 40
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(18)
-        grid.setColumnMinimumWidth(0, UI_FORM_LABEL_W)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnMinimumWidth(2, 100)
-        grid.setColumnMinimumWidth(3, 130)
+        # ── Setup card ───────────────────────────────────────────────────────
+        setup = QFrame()
+        setup.setObjectName("flashSetupCard")
+        s = QVBoxLayout(setup)
+        s.setContentsMargins(24, 22, 24, 22)
+        s.setSpacing(16)
 
-        lab_port = self._form_label("Port")
-        grid.addWidget(lab_port, 0, 0, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        head = QLabel("Flash ShellOS")
+        head.setObjectName("flashCardTitle")
+        s.addWidget(head)
 
+        sub = QLabel("Select your board, USB port, then flash. Firmware is checked automatically.")
+        sub.setObjectName("flashCardSubtitle")
+        sub.setWordWrap(True)
+        s.addWidget(sub)
+
+        # Board row: full width combo
+        row_b = QHBoxLayout()
+        row_b.setSpacing(14)
+        row_b.addWidget(self._flash_field_label("Board"))
+        self.combo_board = QComboBox()
+        self.combo_board.setMinimumHeight(ctrl_h)
+        self.combo_board.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for tid, t in FLASH_TARGETS.items():
+            self.combo_board.addItem(t.label, userData=tid)
+        idx = self.combo_board.findData(self._flash_target_id)
+        if idx >= 0:
+            self.combo_board.setCurrentIndex(idx)
+        self.combo_board.currentIndexChanged.connect(
+            lambda _=None: self._set_flash_target(str(self.combo_board.currentData() or DEFAULT_FLASH_TARGET_ID))
+        )
+        row_b.addWidget(self.combo_board, stretch=1)
+        s.addLayout(row_b)
+
+        # Port row: combo stretches; buttons fixed on the right
+        row_p = QHBoxLayout()
+        row_p.setSpacing(14)
+        row_p.addWidget(self._flash_field_label("USB port"))
         self.combo_port = QComboBox()
         self.combo_port.setMinimumHeight(ctrl_h)
         self.combo_port.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.combo_port.currentIndexChanged.connect(lambda _: self._update_firmware_status())
-        grid.addWidget(self.combo_port, 0, 1)
+        self.combo_port.currentIndexChanged.connect(
+            lambda _: self._settings.setValue("flash/port", self.combo_port.currentData() or "")
+        )
+        row_p.addWidget(self.combo_port, stretch=1)
 
-        btn_refresh = QPushButton("Refresh")
-        btn_refresh.setFixedHeight(ctrl_h)
-        btn_refresh.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        btn_refresh = QPushButton("Refresh ports")
+        btn_refresh.setMinimumHeight(ctrl_h)
+        btn_refresh.setMinimumWidth(118)
         btn_refresh.clicked.connect(self.refresh_ports)
-        grid.addWidget(btn_refresh, 0, 2, alignment=Qt.AlignmentFlag.AlignVCenter)
+        row_p.addWidget(btn_refresh)
 
         btn_monitor = QPushButton("Serial monitor")
-        btn_monitor.setFixedHeight(ctrl_h)
-        btn_monitor.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        btn_monitor.setToolTip(f"Open built-in serial terminal @ {MONITOR_BAUD} baud (selected port)")
+        btn_monitor.setMinimumHeight(ctrl_h)
+        btn_monitor.setMinimumWidth(128)
+        btn_monitor.setToolTip(f"Open serial terminal @ {MONITOR_BAUD} baud (same as idf.py monitor)")
         btn_monitor.clicked.connect(self._on_monitor_clicked)
-        grid.addWidget(btn_monitor, 0, 3, alignment=Qt.AlignmentFlag.AlignVCenter)
+        row_p.addWidget(btn_monitor)
+        s.addLayout(row_p)
 
         self.lbl_fw_path: QLabel | None = None
         if not self._release:
-            lab_fw = self._form_label("Firmware folder", align_top=True)
-            grid.addWidget(lab_fw, 1, 0, alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            fw_title = QLabel("Firmware files (developer)")
+            fw_title.setObjectName("flashSubheading")
+            s.addWidget(fw_title)
 
             self.lbl_fw_path = QLabel()
             self.lbl_fw_path.setObjectName("pathLabel")
             self.lbl_fw_path.setWordWrap(True)
             self.lbl_fw_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            self.lbl_fw_path.setMinimumHeight(ctrl_h)
-            self.lbl_fw_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.MinimumExpanding)
-            self.lbl_fw_path.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(self.lbl_fw_path, 1, 1, 1, 2)
+            self.lbl_fw_path.setMinimumHeight(36)
+            self.lbl_fw_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            self.lbl_fw_path.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+            s.addWidget(self.lbl_fw_path)
 
-            btn_browse = QPushButton("Browse…")
-            btn_browse.setFixedHeight(ctrl_h)
-            btn_browse.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            row_fw = QHBoxLayout()
+            row_fw.addStretch(1)
+            btn_browse = QPushButton("Browse folder…")
+            btn_browse.setMinimumHeight(ctrl_h)
+            btn_browse.setMinimumWidth(140)
             btn_browse.clicked.connect(self._browse_firmware)
-            grid.addWidget(btn_browse, 1, 3, alignment=Qt.AlignmentFlag.AlignTop)
+            row_fw.addWidget(btn_browse)
+            s.addLayout(row_fw)
 
-        sl.addLayout(grid)
+        layout.addWidget(setup)
 
+        # ── Status strip ─────────────────────────────────────────────────────
+        status_wrap = QFrame()
+        status_wrap.setObjectName("flashStatusStrip")
+        sw = QVBoxLayout(status_wrap)
+        sw.setContentsMargins(14, 12, 14, 12)
         self.lbl_fw_status = QLabel()
-        self.lbl_fw_status.setObjectName("statusLabel")
+        self.lbl_fw_status.setObjectName("flashStatusText")
         self.lbl_fw_status.setWordWrap(True)
-        self.lbl_fw_status.setContentsMargins(0, 4, 0, 0)
-        sl.addWidget(self.lbl_fw_status)
+        self.lbl_fw_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sw.addWidget(self.lbl_fw_status)
+        layout.addWidget(status_wrap)
 
-        layout.addWidget(grp_serial)
+        # ── Log (inside same scroll stack; stretch absorbs extra viewport height) ─
+        log_card = QFrame()
+        log_card.setObjectName("flashLogCard")
+        log_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        lc = QVBoxLayout(log_card)
+        lc.setContentsMargins(20, 18, 20, 18)
+        lc.setSpacing(14)
+        log_title = QLabel("Flash output")
+        log_title.setObjectName("flashCardTitle")
+        lc.addWidget(log_title)
 
-        grp_log = QGroupBox("Flash output")
-        grp_log.setObjectName("pkgGroup")
-        gl = QVBoxLayout(grp_log)
-        gl.setSpacing(14)
         self.log = QTextEdit()
+        self.log.setObjectName("flashOutputLog")
         self.log.setReadOnly(True)
         self.log.setFont(app_mono_font(10))
-        self.log.setMinimumHeight(220)
+        self.log.setMinimumHeight(260)
         self.log.setPlaceholderText("esptool output will appear here…")
-        gl.addWidget(self.log, stretch=1)
+        self.log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        lc.addWidget(self.log, stretch=1)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
-        gl.addWidget(self.progress)
-        layout.addWidget(grp_log, stretch=1)
+        lc.addWidget(self.progress)
+        layout.addWidget(log_card, stretch=1)
 
         self.btn_flash = QPushButton("Flash ShellOS to board")
         self.btn_flash.setObjectName("flashBtn")
@@ -838,12 +1056,13 @@ class ShellOSImager(QWidget):
         layout.addWidget(self.btn_flash)
 
         hint_lines = [
-            "Connect USB · install CP210x/CH340 driver if needed · "
-            "hold BOOT and tap RST if the port does not appear.",
+            "USB: install CP210x or CH340 driver if the port does not appear. "
+            "Hold BOOT, tap RST, then release BOOT to enter download mode.",
         ]
         if self._release:
             hint_lines.append(
-                "After flash: serial monitor opens automatically @ 115200. Wi‑Fi shell: TCP port 2323."
+                "After a successful flash, the serial monitor opens @ 115200. "
+                "Then run Wi‑Fi commands in the shell, or use TCP port 2323 from your PC once connected."
             )
         hint = QLabel("\n".join(hint_lines))
         hint.setObjectName("hint")
@@ -853,192 +1072,269 @@ class ShellOSImager(QWidget):
         if self.lbl_fw_path is not None:
             self._sync_fw_path_label()
 
-        return tab
+        return outer
 
     # ── Package tab ───────────────────────────────────────────────────────────
 
     def _build_package_tab(self) -> QWidget:
+        """
+        Packages UI: one scroll area for the whole tab (connect, build, table, log, tip)
+        so layout matches Flash and nothing overlaps when the window is short.
+        """
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(0, 4, 0, 8)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setObjectName("pkgScroll")
+        ctrl_h = 42
 
-        inner = QWidget()
-        inner.setObjectName("pkgScrollInner")
-        layout = QVBoxLayout(inner)
-        layout.setSpacing(UI_SPACING_MAJOR)
-        layout.setContentsMargins(UI_MARGIN_TAB, UI_MARGIN_TAB, UI_MARGIN_TAB, UI_MARGIN_TAB)
+        _pkg_scroll = QScrollArea()
+        _pkg_scroll.setObjectName("pkgTabScroll")
+        _pkg_scroll.setWidgetResizable(True)
+        _pkg_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        _pkg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        _pkg_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        _pkg_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # ── Device IP + connection status ──
-        grp_conn = QGroupBox("Device on your network")
-        grp_conn.setObjectName("pkgGroup")
-        conn_outer = QVBoxLayout(grp_conn)
-        conn_outer.setSpacing(UI_SPACING_BLOCK)
-        conn_row = QHBoxLayout()
-        conn_row.setSpacing(16)
-        conn_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        conn_row.addWidget(self._form_label("Device IP"))
+        _pkg_scroll_inner = QWidget()
+        top_layout = QVBoxLayout(_pkg_scroll_inner)
+        top_layout.setSpacing(UI_SPACING_MAJOR)
+        top_layout.setContentsMargins(4, 8, 10, 24)
+        _pkg_scroll.setWidget(_pkg_scroll_inner)
+        outer.addWidget(_pkg_scroll, stretch=1)
+
+        # --- Connect card ---
+        conn = QFrame()
+        conn.setObjectName("pkgSectionCard")
+        cv = QVBoxLayout(conn)
+        cv.setContentsMargins(24, 22, 24, 22)
+        cv.setSpacing(14)
+
+        ct = QLabel("Packages on your device")
+        ct.setObjectName("flashCardTitle")
+        cv.addWidget(ct)
+        cs = QLabel(
+            "Enter the board’s IP address (from <b>wifi status</b> in the serial shell, or your router). "
+            "The device must be on the same network as this PC."
+        )
+        cs.setTextFormat(Qt.TextFormat.RichText)
+        cs.setWordWrap(True)
+        cs.setObjectName("flashCardSubtitle")
+        cv.addWidget(cs)
+
+        ip_row = QHBoxLayout()
+        ip_row.setSpacing(14)
+        ip_row.addWidget(self._flash_field_label("Device IP"))
         self._pkg_ip = QLineEdit()
-        self._pkg_ip.setPlaceholderText("e.g. 192.168.0.105")
-        self._pkg_ip.setMinimumWidth(220)
-        self._pkg_ip.setMaximumWidth(320)
-        self._pkg_ip.setMinimumHeight(36)
+        self._pkg_ip.setPlaceholderText("e.g. 192.168.1.42")
+        self._pkg_ip.setMinimumHeight(ctrl_h)
+        self._pkg_ip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._pkg_ip.textChanged.connect(self._pkg_ip_changed)
-        conn_row.addWidget(self._pkg_ip)
+        ip_row.addWidget(self._pkg_ip, stretch=1)
         self._pkg_connect_btn = QPushButton("Connect")
         self._pkg_connect_btn.setObjectName("pkgActionBtn")
-        self._pkg_connect_btn.setMinimumHeight(38)
+        self._pkg_connect_btn.setMinimumHeight(ctrl_h)
+        self._pkg_connect_btn.setMinimumWidth(124)
         self._pkg_connect_btn.setToolTip(
-            f"Probes TCP port {HTTP_UPLOAD_PORT}, then loads the package list (HTTP)."
+            f"Checks TCP {HTTP_UPLOAD_PORT}, then loads the package list over HTTP."
         )
         self._pkg_connect_btn.clicked.connect(self._pkg_connect)
-        conn_row.addWidget(self._pkg_connect_btn)
+        ip_row.addWidget(self._pkg_connect_btn)
+        cv.addLayout(ip_row)
+
+        status_strip = QFrame()
+        status_strip.setObjectName("pkgConnStatusStrip")
+        sw = QVBoxLayout(status_strip)
+        sw.setContentsMargins(12, 10, 12, 10)
         self._pkg_conn_status = QLabel("Not connected")
-        self._pkg_conn_status.setObjectName("statusLabel")
+        self._pkg_conn_status.setObjectName("flashStatusText")
+        self._pkg_conn_status.setWordWrap(True)
         self._pkg_conn_status.setStyleSheet("color: #64748b;")
-        self._pkg_conn_status.setMinimumWidth(200)
-        conn_row.addWidget(self._pkg_conn_status, stretch=1)
-        conn_outer.addLayout(conn_row)
+        sw.addWidget(self._pkg_conn_status)
+        cv.addWidget(status_strip)
+
         port_hint = QLabel(
-            f"Package manager uses <b>HTTP</b> on TCP <b>{HTTP_UPLOAD_PORT}</b>. "
-            f"PuTTY <b>RAW</b> on <b>{SHELL_TCP_PORT}</b> is the shell only — different service."
+            f"<b>HTTP</b> port <b>{HTTP_UPLOAD_PORT}</b> — package install and list. "
+            f"<b>TCP</b> port <b>{SHELL_TCP_PORT}</b> (PuTTY Raw) — interactive shell only."
         )
         port_hint.setObjectName("hint")
         port_hint.setWordWrap(True)
         port_hint.setTextFormat(Qt.TextFormat.RichText)
-        conn_outer.addWidget(port_hint)
-        layout.addWidget(grp_conn)
+        cv.addWidget(port_hint)
 
-        # ── Build + Deploy ──
-        grp_build = QGroupBox("Build and deploy")
-        grp_build.setObjectName("pkgGroup")
-        b_layout = QVBoxLayout(grp_build)
-        b_layout.setSpacing(UI_SPACING_BLOCK)
+        top_layout.addWidget(conn)
+
+        # --- Build card ---
+        build = QFrame()
+        build.setObjectName("pkgSectionCard")
+        bv = QVBoxLayout(build)
+        bv.setContentsMargins(24, 22, 24, 22)
+        bv.setSpacing(14)
+
+        bt = QLabel("Build and deploy")
+        bt.setObjectName("flashCardTitle")
+        bv.addWidget(bt)
+        bs = QLabel(
+            "Turn an Arduino-style .ino into a .shpkg, then send it to the device. "
+            "Requires Python and shellos_compiler (see project tools/)."
+        )
+        bs.setObjectName("flashCardSubtitle")
+        bs.setWordWrap(True)
+        bv.addWidget(bs)
 
         ino_row = QHBoxLayout()
-        ino_row.setSpacing(16)
+        ino_row.setSpacing(14)
         ino_row.setAlignment(Qt.AlignmentFlag.AlignTop)
-        ino_row.addWidget(self._form_label("Sketch", align_top=True))
+        ino_row.addWidget(self._flash_field_label("Sketch"))
         self._pkg_ino_path = QLabel("(none selected)")
         self._pkg_ino_path.setObjectName("pathLabel")
-        self._pkg_ino_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._pkg_ino_path.setWordWrap(True)
+        self._pkg_ino_path.setMinimumHeight(36)
+        self._pkg_ino_path.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ino_row.addWidget(self._pkg_ino_path, stretch=1)
         btn_ino = QPushButton("Browse…")
-        btn_ino.setMinimumHeight(36)
+        btn_ino.setMinimumHeight(ctrl_h)
+        btn_ino.setMinimumWidth(100)
         btn_ino.clicked.connect(self._pkg_browse_ino)
         ino_row.addWidget(btn_ino)
-        b_layout.addLayout(ino_row)
+        bv.addLayout(ino_row)
 
         pkg_row = QHBoxLayout()
-        pkg_row.setSpacing(16)
-        pkg_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        pkg_row.addWidget(self._form_label("Package file"))
+        pkg_row.setSpacing(14)
+        pkg_row.addWidget(self._flash_field_label(".shpkg file"))
         self._pkg_shpkg_deploy = QLineEdit()
-        self._pkg_shpkg_deploy.setPlaceholderText("Filled after build, or browse to an existing .shpkg")
-        self._pkg_shpkg_deploy.setMinimumHeight(36)
+        self._pkg_shpkg_deploy.setPlaceholderText("Set after Build, or browse to an existing .shpkg")
+        self._pkg_shpkg_deploy.setMinimumHeight(ctrl_h)
+        self._pkg_shpkg_deploy.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         pkg_row.addWidget(self._pkg_shpkg_deploy, stretch=1)
         btn_shpkg = QPushButton("Browse…")
-        btn_shpkg.setMinimumHeight(36)
+        btn_shpkg.setMinimumHeight(ctrl_h)
+        btn_shpkg.setMinimumWidth(100)
         btn_shpkg.clicked.connect(self._pkg_browse_shpkg)
         pkg_row.addWidget(btn_shpkg)
-        b_layout.addLayout(pkg_row)
+        bv.addLayout(pkg_row)
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(12)
-        btn_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        btn_row.setSpacing(10)
         self._pkg_build_btn = QPushButton("Build")
         self._pkg_build_btn.setObjectName("pkgActionBtn")
-        self._pkg_build_btn.setMinimumHeight(40)
+        self._pkg_build_btn.setMinimumHeight(42)
         self._pkg_build_btn.setToolTip("Compile .ino to .shpkg (no upload)")
         self._pkg_build_btn.clicked.connect(lambda: self._pkg_build(deploy_after=False))
         btn_row.addWidget(self._pkg_build_btn)
 
         self._pkg_deploy_btn = QPushButton("Upload && install")
         self._pkg_deploy_btn.setObjectName("pkgActionBtn")
-        self._pkg_deploy_btn.setMinimumHeight(40)
-        self._pkg_deploy_btn.setToolTip("Upload the selected .shpkg to the device")
+        self._pkg_deploy_btn.setMinimumHeight(42)
+        self._pkg_deploy_btn.setToolTip("POST the selected .shpkg to the device")
         self._pkg_deploy_btn.clicked.connect(self._pkg_deploy)
         btn_row.addWidget(self._pkg_deploy_btn)
 
         self._pkg_build_deploy_btn = QPushButton("Build + deploy + run")
         self._pkg_build_deploy_btn.setObjectName("pkgDeployBtn")
-        self._pkg_build_deploy_btn.setMinimumHeight(40)
-        self._pkg_build_deploy_btn.setToolTip("Build, upload, and immediately run the package")
+        self._pkg_build_deploy_btn.setMinimumHeight(42)
+        self._pkg_build_deploy_btn.setToolTip("Build, upload, and start the package")
         self._pkg_build_deploy_btn.clicked.connect(lambda: self._pkg_build(deploy_after=True))
         btn_row.addWidget(self._pkg_build_deploy_btn)
         btn_row.addStretch(1)
+        bv.addLayout(btn_row)
+
         self._pkg_deploy_status = QLabel("")
         self._pkg_deploy_status.setObjectName("statusLabel")
-        btn_row.addWidget(self._pkg_deploy_status)
-        b_layout.addLayout(btn_row)
+        self._pkg_deploy_status.setWordWrap(True)
+        bv.addWidget(self._pkg_deploy_status)
 
-        layout.addWidget(grp_build)
+        top_layout.addWidget(build)
 
-        # ── Installed packages ──
-        grp_manage = QGroupBox("Installed packages")
-        grp_manage.setObjectName("pkgGroup")
-        m_layout = QVBoxLayout(grp_manage)
-        m_layout.setSpacing(UI_SPACING_BLOCK)
+        # ── Installed packages (fills remaining height) ────────────────────────
+        table_card = QFrame()
+        table_card.setObjectName("pkgSectionCard")
+        table_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        m_layout = QVBoxLayout(table_card)
+        m_layout.setContentsMargins(18, 16, 18, 16)
+        m_layout.setSpacing(12)
 
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(12)
-        ctrl_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        hdr = QHBoxLayout()
+        hdr.setSpacing(12)
+        tbl_title = QLabel("Installed packages")
+        tbl_title.setObjectName("flashCardTitle")
+        hdr.addWidget(tbl_title)
+        hdr.addStretch(1)
         self._pkg_refresh_btn = QPushButton("Refresh list")
-        self._pkg_refresh_btn.setMinimumHeight(36)
+        self._pkg_refresh_btn.setMinimumHeight(38)
         self._pkg_refresh_btn.clicked.connect(self._pkg_refresh)
-        ctrl_row.addWidget(self._pkg_refresh_btn)
+        hdr.addWidget(self._pkg_refresh_btn)
         self._pkg_running_count = QLabel("")
         self._pkg_running_count.setObjectName("statusLabel")
         self._pkg_running_count.setStyleSheet("color: #059669; font-size: 13px; font-weight: 600;")
-        ctrl_row.addWidget(self._pkg_running_count)
-        ctrl_row.addStretch()
-        m_layout.addLayout(ctrl_row)
+        hdr.addWidget(self._pkg_running_count)
+        m_layout.addLayout(hdr)
 
         self._pkg_table = QTableWidget(0, 5)
-        self._pkg_table.setHorizontalHeaderLabels(["Package", "Version", "Status", "Description", "Actions"])
-        self._pkg_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._pkg_table.setHorizontalHeaderLabels(
+            ["Package", "Version", "Status", "Description", "Actions"]
+        )
+        _ph = self._pkg_table.horizontalHeader()
+        _ph.setStretchLastSection(False)
+        _ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        _ph.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        _ph.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        _ph.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        _ph.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         self._pkg_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._pkg_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._pkg_table.setAlternatingRowColors(True)
-        self._pkg_table.verticalHeader().setVisible(False)
+        _vh = self._pkg_table.verticalHeader()
+        _vh.setVisible(False)
+        _vh.setDefaultSectionSize(60)
+        _vh.setMinimumSectionSize(60)
+        _vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self._pkg_table.setShowGrid(False)
-        self._pkg_table.setMinimumHeight(200)
-        self._pkg_table.setColumnWidth(0, 140)
-        self._pkg_table.setColumnWidth(1, 88)
+        self._pkg_table.setMinimumHeight(420)
+        self._pkg_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._pkg_table.setColumnWidth(0, 150)
+        self._pkg_table.setColumnWidth(1, 80)
         self._pkg_table.setColumnWidth(2, 100)
-        self._pkg_table.setColumnWidth(4, 210)
-        m_layout.addWidget(self._pkg_table)
+        self._pkg_table.setColumnWidth(4, 360)
+        self._pkg_table.setMinimumWidth(700)
+        self._pkg_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        m_layout.addWidget(self._pkg_table, stretch=1)
 
-        layout.addWidget(grp_manage)
+        top_layout.addWidget(table_card, stretch=1)
 
-        # ── Activity log ──
-        grp_log = QGroupBox("Activity log")
-        grp_log.setObjectName("pkgGroup")
-        log_layout = QVBoxLayout(grp_log)
+        # ── Activity log ────────────────────────────────────────────────────────
+        log_card = QFrame()
+        log_card.setObjectName("pkgSectionCard")
+        log_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        ll = QVBoxLayout(log_card)
+        ll.setContentsMargins(18, 16, 18, 16)
+        ll.setSpacing(10)
+        log_title = QLabel("Activity log")
+        log_title.setObjectName("flashCardTitle")
+        ll.addWidget(log_title)
         self._pkg_log = QTextEdit()
         self._pkg_log.setReadOnly(True)
         self._pkg_log.setFont(app_mono_font(10))
-        self._pkg_log.setMinimumHeight(120)
-        self._pkg_log.setMaximumHeight(180)
-        self._pkg_log.setPlaceholderText("Build output, uploads, and API messages appear here…")
-        log_layout.addWidget(self._pkg_log)
-        layout.addWidget(grp_log)
+        self._pkg_log.setMinimumHeight(160)
+        self._pkg_log.setPlaceholderText("Build output, uploads, and HTTP responses…")
+        self._pkg_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        ll.addWidget(self._pkg_log)
 
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
+        top_layout.addWidget(log_card)
+
+        foot = QLabel(
+            "Tip: if Connect fails but the shell works on port 2323, check Windows Firewall "
+            "for Python — it may block outbound connections to port 8080."
+        )
+        foot.setObjectName("hint")
+        foot.setWordWrap(True)
+        top_layout.addWidget(foot)
 
         # Restore saved IP
         self._pkg_settings = QSettings("ShellOS", "Imager")
         saved_ip = self._pkg_settings.value("pkg/device_ip", "")
         if saved_ip:
-            self._pkg_ip.setText(saved_ip)
+            self._pkg_ip.setText(str(saved_ip))
 
         self._pkg_auto_refresh = QTimer(self)
         self._pkg_auto_refresh.setInterval(8000)
@@ -1091,18 +1387,7 @@ class ShellOSImager(QWidget):
                 self._invoke_main.emit(partial(self._pkg_connect_done, -2, tcp_err + extra))
                 return
             self._invoke_main.emit(partial(self._pkg_conn_status.setText, "Port open — loading list..."))
-            try:
-                url = f"http://{_ip}:{HTTP_UPLOAD_PORT}/pkg/list"
-                req = urllib.request.Request(url, method="GET")
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    status = resp.status
-                    body = resp.read().decode("utf-8", errors="replace")
-            except urllib.error.HTTPError as e:
-                status = e.code
-                body = e.read().decode("utf-8", errors="replace")
-            except Exception as e:
-                status = -1
-                body = str(e)
+            status, body = self._pkg_api("GET", "/pkg/list", ip=_ip, timeout=12)
             self._invoke_main.emit(partial(self._pkg_connect_done, status, body))
 
         threading.Thread(target=_do, daemon=True).start()
@@ -1203,12 +1488,19 @@ class ShellOSImager(QWidget):
             self._pkg_log_append("ERROR: could not start compiler")
 
     def _pkg_api(self, method: str, path: str, body: bytes | None = None,
-                 ip: str = "", timeout: int = 10) -> tuple[int, str]:
-        """Call from background threads only. Pass ip= explicitly (never read Qt widgets here)."""
+                 ip: str = "", timeout: int = 12) -> tuple[int, str]:
+        """
+        Call from background threads only. Pass ip= explicitly (never read Qt widgets here).
+
+        Always sets Connection: close so ESP32's httpd (which closes after every response)
+        does not leave Python's urllib trying to reuse a dead keep-alive socket, which would
+        cause the next request to hang until a socket.timeout fires.
+        """
         if not ip:
             return -1, "No device IP set"
         url = f"http://{ip}:{HTTP_UPLOAD_PORT}{path}"
         req = urllib.request.Request(url, data=body, method=method)
+        req.add_header("Connection", "close")
         if body:
             req.add_header("Content-Type", "application/octet-stream")
         try:
@@ -1300,7 +1592,13 @@ class ShellOSImager(QWidget):
             return
 
         try:
-            packages = json.loads(body)
+            # The firmware may embed literal control characters (newlines, tabs,
+            # carriage returns) inside JSON string values when a package manifest
+            # has multi-line or trailing-whitespace description fields.
+            # JSON requires those to be escaped (\n, \t, …); replace them with a
+            # space so the parser doesn't reject an otherwise valid response.
+            sanitised = re.sub(r'[\x00-\x1f\x7f]', ' ', body)
+            packages = json.loads(sanitised)
         except Exception:
             if not silent:
                 self._pkg_log_append(f"[ERR] Bad response: {body[:80]}")
@@ -1319,7 +1617,9 @@ class ShellOSImager(QWidget):
         for pkg in packages:
             name    = pkg.get("name", "?")
             version = pkg.get("version", "?")
-            desc    = pkg.get("description", "")
+            desc    = str(pkg.get("description", "") or "").strip()
+            if desc == "," or desc == "，":
+                desc = ""
             running = pkg.get("running", False)
 
             row = self._pkg_table.rowCount()
@@ -1346,33 +1646,35 @@ class ShellOSImager(QWidget):
             self._pkg_table.setItem(row, 3, desc_item)
 
             action_widget = QWidget()
+            action_widget.setMinimumHeight(58)
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(8, 4, 8, 4)
-            action_layout.setSpacing(6)
+            action_layout.setContentsMargins(16, 0, 16, 0)
+            action_layout.setSpacing(8)
             action_layout.setAlignment(_ta.AlignVCenter)
 
             btn_run = QPushButton("Run")
             btn_run.setEnabled(not running)
-            btn_run.setFixedWidth(52)
+            btn_run.setFixedSize(80, 34)
             btn_run.setObjectName("pkgRunBtn" if not running else "pkgRunBtnOff")
             btn_run.clicked.connect(lambda _, n=name: self._pkg_run(n))
             action_layout.addWidget(btn_run)
 
             btn_stop = QPushButton("Stop")
             btn_stop.setEnabled(running)
-            btn_stop.setFixedWidth(52)
+            btn_stop.setFixedSize(80, 34)
+            btn_stop.setObjectName("pkgStopBtn")
             btn_stop.clicked.connect(lambda _, n=name: self._pkg_stop(n))
             action_layout.addWidget(btn_stop)
 
             btn_remove = QPushButton("Remove")
             btn_remove.setEnabled(not running)
-            btn_remove.setFixedWidth(62)
+            btn_remove.setFixedSize(96, 34)
             btn_remove.setObjectName("pkgRemoveBtn")
             btn_remove.clicked.connect(lambda _, n=name: self._pkg_remove(n))
             action_layout.addWidget(btn_remove)
 
             self._pkg_table.setCellWidget(row, 4, action_widget)
-            self._pkg_table.setRowHeight(row, 46)
+            self._pkg_table.setRowHeight(row, 60)
 
         if not silent:
             self._pkg_log_append(f"[OK] {len(packages)} package(s)  ({running_count} running)")
@@ -1471,9 +1773,67 @@ class ShellOSImager(QWidget):
                 line-height: 1.55;
                 padding-top: 6px;
             }
+            QFrame#flashSetupCard, QFrame#flashLogCard {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+            }
+            QLabel#flashCardTitle {
+                font-size: 17px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            QLabel#flashCardSubtitle {
+                font-size: 13px;
+                color: #64748b;
+                line-height: 1.45;
+            }
+            QLabel#flashFieldLabel {
+                color: #475569;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QLabel#flashSubheading {
+                font-size: 11px;
+                font-weight: 700;
+                color: #64748b;
+                letter-spacing: 0.06em;
+            }
+            QFrame#flashStatusStrip {
+                background-color: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+            }
+            QLabel#flashStatusText {
+                font-size: 13px;
+                color: #334155;
+                line-height: 1.45;
+            }
             QFrame#sep { background-color: #e2e8f0; max-height: 1px; margin-top: 6px; margin-bottom: 6px; border: none; }
-            QScrollArea#pkgScroll { background: transparent; border: none; }
-            QWidget#pkgScrollInner { background: transparent; }
+            QScrollArea#flashTabScroll, QScrollArea#pkgTabScroll {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollArea#flashTabScroll > QWidget > QWidget,
+            QScrollArea#pkgTabScroll > QWidget > QWidget {
+                background-color: transparent;
+            }
+            QTextEdit#flashOutputLog {
+                background-color: #f8fafc;
+                color: #1e293b;
+                border: 1px solid #cbd5e1;
+                border-radius: 10px;
+            }
+            QFrame#pkgSectionCard {
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+            }
+            QFrame#pkgConnStatusStrip {
+                background-color: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 10px;
+            }
             QTabWidget#mainTabs::pane {
                 border: 1px solid #e2e8f0;
                 border-radius: 10px;
@@ -1501,24 +1861,6 @@ class ShellOSImager(QWidget):
                 margin-bottom: -1px;
             }
             QTabBar::tab:hover:!selected { color: #334155; background: #f1f5f9; }
-            QGroupBox#pkgGroup {
-                font-size: 14px;
-                font-weight: 600;
-                color: #334155;
-                border: 1px solid #e2e8f0;
-                border-radius: 10px;
-                margin-top: 20px;
-                padding: 30px 20px 22px 20px;
-                background-color: #ffffff;
-            }
-            QGroupBox#pkgGroup::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 14px;
-                padding: 4px 10px;
-                color: #0f766e;
-                background-color: #ffffff;
-            }
             QPushButton#pkgActionBtn {
                 background-color: #eff6ff;
                 color: #1d4ed8;
@@ -1541,15 +1883,43 @@ class ShellOSImager(QWidget):
             }
             QPushButton#pkgDeployBtn:hover { background-color: #d1fae5; border-color: #10b981; color: #065f46; }
             QPushButton#pkgDeployBtn:disabled { background-color: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
+            QPushButton#pkgRunBtn {
+                background-color: #ecfdf5;
+                color: #047857;
+                border: 1px solid #6ee7b7;
+                border-radius: 7px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton#pkgRunBtn:hover { background-color: #d1fae5; border-color: #10b981; color: #065f46; }
+            QPushButton#pkgRunBtn:disabled { background-color: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
+            QPushButton#pkgRunBtnOff {
+                background-color: #f1f5f9;
+                color: #94a3b8;
+                border: 1px solid #e2e8f0;
+                border-radius: 7px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QPushButton#pkgStopBtn {
+                background-color: #fff7ed;
+                color: #c2410c;
+                border: 1px solid #fdba74;
+                border-radius: 7px;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            QPushButton#pkgStopBtn:hover { background-color: #ffedd5; border-color: #f97316; color: #9a3412; }
+            QPushButton#pkgStopBtn:disabled { background-color: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }
             QPushButton#pkgRemoveBtn {
                 background-color: #fef2f2;
                 color: #b91c1c;
                 border: 1px solid #fca5a5;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-weight: 600;
+                border-radius: 7px;
+                font-size: 12px;
+                font-weight: 700;
             }
-            QPushButton#pkgRemoveBtn:hover { background-color: #fee2e2; border-color: #ef4444; }
+            QPushButton#pkgRemoveBtn:hover { background-color: #fee2e2; border-color: #ef4444; color: #991b1b; }
             QPushButton#pkgRemoveBtn:disabled { background-color: #f8fafc; color: #cbd5e1; border-color: #e2e8f0; }
             QTableWidget {
                 background-color: #ffffff;
@@ -1558,7 +1928,7 @@ class ShellOSImager(QWidget):
                 gridline-color: transparent;
                 alternate-background-color: #f8fafc;
             }
-            QTableWidget::item { padding: 10px 14px; border: none; }
+            QTableWidget::item { padding: 16px 14px; border: none; }
             QTableWidget::item:selected { background-color: #ccfbf1; color: #0f172a; }
             QHeaderView::section {
                 background-color: #f8fafc;
@@ -1631,20 +2001,40 @@ class ShellOSImager(QWidget):
         )
 
     def _sync_fw_path_label(self) -> None:
-        if self.lbl_fw_path is not None:
+        if self.lbl_fw_path is None:
+            return
+        resolved = self._resolved_fw_dir()
+        if resolved is not None:
+            try:
+                legacy = resolved.resolve() != self._fw_dir.resolve()
+            except OSError:
+                legacy = str(resolved) != str(self._fw_dir)
+            if legacy:
+                self.lbl_fw_path.setText(
+                    f"{resolved}\n"
+                    f"(Legacy layout is OK. Optional: copy the three .bin files to {self._fw_dir}.)"
+                )
+            else:
+                self.lbl_fw_path.setText(str(resolved))
+        else:
             self.lbl_fw_path.setText(str(self._fw_dir))
 
     def _browse_firmware(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Select folder with .bin files", str(self._fw_dir))
         if d:
             self._fw_dir = Path(d)
+            self._settings.setValue(f"flash/fw_dir/{self._flash_target_id}", str(self._fw_dir))
             self._sync_fw_path_label()
             self._update_firmware_status()
 
     def _missing_files(self) -> list[str]:
+        t = self._active_flash_target()
+        if self._resolved_fw_dir() is not None:
+            return []
         missing: list[str] = []
-        for _, name in FLASH_LAYOUT:
-            if not (self._fw_dir / name).is_file():
+        cands = self._firmware_dir_candidates()
+        for _, name in t.layout:
+            if not any((d / name).is_file() for d in cands):
                 missing.append(name)
         return missing
 
@@ -1653,16 +2043,25 @@ class ShellOSImager(QWidget):
         port_ok = self.combo_port.currentData() is not None
         if missing:
             if self._release:
+                self.lbl_fw_status.setTextFormat(Qt.TextFormat.PlainText)
                 self.lbl_fw_status.setText(
                     "This app build is incomplete. Rebuild the imager with firmware included, or use a fresh download."
                 )
             else:
+                extra = ""
+                if self._flash_target_id == "esp32-cam":
+                    extra = (
+                        f" For ESP32-CAM you can use either <b>imager/firmware/esp32-cam/</b> "
+                        f"or the older flat folder <b>imager/firmware/</b> (same three .bin files)."
+                    )
+                self.lbl_fw_status.setTextFormat(Qt.TextFormat.RichText)
                 self.lbl_fw_status.setText(
-                    f"Missing: {', '.join(missing)}  — copy build outputs (see firmware/README.txt)"
+                    f"Missing: {', '.join(missing)}  — copy build outputs (see firmware/README.txt).{extra}"
                 )
             self.lbl_fw_status.setStyleSheet("color: #dc2626; font-weight: 600;")
             self.btn_flash.setEnabled(False)
         else:
+            self.lbl_fw_status.setTextFormat(Qt.TextFormat.PlainText)
             if self._release:
                 self.lbl_fw_status.setText(
                     "Ready to flash."
@@ -1679,6 +2078,8 @@ class ShellOSImager(QWidget):
                 "color: #059669; font-weight: 600;" if port_ok else "color: #d97706; font-weight: 600;"
             )
             self.btn_flash.setEnabled(port_ok)
+        if getattr(self, "lbl_fw_path", None) is not None:
+            self._sync_fw_path_label()
 
     def refresh_ports(self) -> None:
         self.combo_port.clear()
@@ -1693,6 +2094,30 @@ class ShellOSImager(QWidget):
             self.combo_port.addItem(label, userData=p.device)
         if self.combo_port.count() == 0:
             self.combo_port.addItem("(no serial ports found)", userData=None)
+            self._update_firmware_status()
+            return
+
+        # Auto-select last used port (or best guess) for smoother first-run UX.
+        saved = str(self._settings.value("flash/port", "") or "")
+        if saved:
+            idx = self.combo_port.findData(saved)
+            if idx >= 0:
+                self.combo_port.setCurrentIndex(idx)
+                self._update_firmware_status()
+                return
+
+        preferred = -1
+        for i in range(self.combo_port.count()):
+            dev = str(self.combo_port.itemData(i) or "")
+            text = (self.combo_port.itemText(i) or "").lower()
+            if any(k in text for k in ("cp210", "ch340", "silicon labs", "usb serial", "jtag", "cdc")):
+                preferred = i
+                break
+            if sys.platform == "win32" and dev.upper().startswith("COM"):
+                preferred = 0 if preferred < 0 else preferred
+        if preferred >= 0:
+            self.combo_port.setCurrentIndex(preferred)
+
         self._update_firmware_status()
 
     def _append_log(self, text: str) -> None:
@@ -1723,7 +2148,7 @@ class ShellOSImager(QWidget):
         r = QMessageBox.question(
             self,
             APP_NAME,
-            "This will erase and write flash on the connected ESP32.\n\nContinue?",
+            f"This will erase and write flash on the connected {self._active_flash_target().label}.\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1736,7 +2161,7 @@ class ShellOSImager(QWidget):
             self._monitor_dialog.close()
             self._monitor_dialog = None
 
-    def _open_serial_monitor(self, port: str | None) -> None:
+    def _open_serial_monitor(self, port: str | None, *, show_wifi_setup_hint: bool = False) -> None:
         if not port:
             return
         if list_ports is None:
@@ -1748,7 +2173,9 @@ class ShellOSImager(QWidget):
             QMessageBox.warning(self, APP_NAME, "pyserial is not installed.")
             return
         self._close_serial_monitor()
-        dlg = SerialMonitorDialog(port, MONITOR_BAUD, self)
+        dlg = SerialMonitorDialog(
+            port, MONITOR_BAUD, self, show_wifi_setup_hint=show_wifi_setup_hint
+        )
         self._monitor_dialog = dlg
 
         def _clear_ref(_code: int = 0) -> None:
@@ -1763,7 +2190,7 @@ class ShellOSImager(QWidget):
         if not port:
             QMessageBox.warning(self, APP_NAME, "Select a serial port first.")
             return
-        self._open_serial_monitor(port)
+        self._open_serial_monitor(port, show_wifi_setup_hint=False)
 
     def _run_esptool(self, port: str) -> None:
         self._last_flash_port = port
@@ -1771,9 +2198,16 @@ class ShellOSImager(QWidget):
         self.btn_flash.setEnabled(False)
         self.progress.setVisible(True)
         self.log.clear()
+        t = self._active_flash_target()
+        fw_root = self._resolved_fw_dir()
+        if fw_root is None:
+            self._append_log("ERROR: firmware .bin files not found.")
+            self._flash_done(False)
+            return
         self._append_log(f"→ Port: {port}")
+        self._append_log(f"→ Board: {t.label}")
         self._append_log(
-            "→ Firmware: bundled with app" if self._release else f"→ Firmware: {self._fw_dir}"
+            "→ Firmware: bundled with app" if self._release else f"→ Firmware: {fw_root}"
         )
         self._append_log("")
 
@@ -1781,21 +2215,21 @@ class ShellOSImager(QWidget):
             "-m",
             "esptool",
             "--chip",
-            CHIP,
+            t.chip,
             "--port",
             port,
             "--baud",
             DEFAULT_BAUD,
             "write_flash",
             "--flash_mode",
-            FLASH_MODE,
+            t.flash_mode,
             "--flash_freq",
-            FLASH_FREQ,
+            t.flash_freq,
             "--flash_size",
-            FLASH_SIZE,
+            t.flash_size,
         ]
-        for addr, name in FLASH_LAYOUT:
-            path = self._fw_dir / name
+        for addr, name in t.layout:
+            path = fw_root / name
             args.extend([f"0x{addr:x}", str(path)])
 
         self._process = QProcess(self)
@@ -1826,14 +2260,10 @@ class ShellOSImager(QWidget):
         self._update_firmware_status()
         if ok:
             port = self._last_flash_port
-            QTimer.singleShot(650, lambda p=port: self._open_serial_monitor(p))
-            QMessageBox.information(
-                self,
-                APP_NAME,
-                "Flash completed.\n\n"
-                "A serial monitor window opens in a moment (115200 baud), similar to ESP-IDF monitor.\n"
-                "Press RST on the board if the screen stays blank.\n\n"
-                + MONITOR_HELP,
+            # Wi‑Fi steps are shown inside the serial monitor (green box), not only in a popup.
+            QTimer.singleShot(
+                650,
+                lambda p=port: self._open_serial_monitor(p, show_wifi_setup_hint=True),
             )
 
 

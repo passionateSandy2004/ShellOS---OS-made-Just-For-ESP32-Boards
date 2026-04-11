@@ -94,8 +94,13 @@ void kernel_wifi_autoconnect(void)
         if (netsh_server_start(NETSH_DEFAULT_PORT) == ESP_OK) {
             uart_printf("  " TERM_FG_GREEN TERM_BOLD "[OK]" TERM_RESET " " TERM_FG_MAGENTA "[TCP]" TERM_RESET " Shell listening on " TERM_BOLD TERM_FG_NEON_CYAN ":%u" TERM_RESET "\r\n", (unsigned)NETSH_DEFAULT_PORT);
         }
-        if (http_upload_server_start() == ESP_OK) {
-            uart_printf("  " TERM_FG_GREEN TERM_BOLD "[OK]" TERM_RESET " " TERM_FG_CYAN "[HTTP]" TERM_RESET " Package API on " TERM_BOLD TERM_FG_NEON_CYAN ":%u" TERM_RESET "\r\n", (unsigned)HTTP_UPLOAD_PORT);
+        {
+            esp_err_t herr = http_upload_server_start();
+            if (herr == ESP_OK) {
+                uart_printf("  " TERM_FG_GREEN TERM_BOLD "[OK]" TERM_RESET " " TERM_FG_CYAN "[HTTP]" TERM_RESET " Package API on " TERM_BOLD TERM_FG_NEON_CYAN ":%u" TERM_RESET "\r\n", (unsigned)HTTP_UPLOAD_PORT);
+            } else {
+                uart_printf("  " TERM_FG_RED TERM_BOLD "[FAIL]" TERM_RESET " HTTP Package API failed: %s\r\n", esp_err_to_name(herr));
+            }
         }
     } else {
         uart_printf("  " THEME_TAG_FAIL " " TERM_FG_RED "[WiFi]" TERM_RESET " Connection failed. Check " TERM_FG_CYAN "config/wifi.cfg" TERM_RESET ".\r\n");

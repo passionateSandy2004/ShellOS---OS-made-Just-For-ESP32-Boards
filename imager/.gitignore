@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
-firmware/*.bin
+firmware/**/*.bin
 build/
 dist/
 *.spec
+.venv/
+.venv_build/

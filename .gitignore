@@ -18,8 +18,9 @@ __pycache__/
 .ruff_cache/
 .python-version
 
-# Local virtual environments
+# Local virtual environments (all locations)
 .venv/
+.venv_build/
 venv/
 env/
 
@@ -38,6 +39,10 @@ imager/build/
 imager/dist/
 imager/*.spec
 imager/.venv/
+imager/.venv_build/
+
+# --- Firmware binaries (built by CI, not checked in) ---
+imager/firmware/**/*.bin
 
 # --- Logs / temporary artifacts ---
 *.log
@@ -45,3 +50,6 @@ imager/.venv/
 
 # --- ShellOS build artifacts ---
 *.shpkg
+
+# --- Project planning (not for public repo) ---
+phases.md
