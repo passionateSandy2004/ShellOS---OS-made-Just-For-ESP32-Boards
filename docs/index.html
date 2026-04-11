@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="ShellOS — a real shell, filesystem, packages, and networking on ESP32. Download the Windows imager to flash your board." />
+  <title>ShellOS — OS for ESP32</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c1222;
+      --bg-card: #141c2f;
+      --border: #243047;
+      --text: #e8edf5;
+      --muted: #94a3b8;
+      --accent: #14b8a6;
+      --accent-dim: #0d9488;
+      --accent-glow: rgba(20, 184, 166, 0.35);
+      --danger: #f43f5e;
+      --radius: 14px;
+      --max: 720px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "DM Sans", system-ui, sans-serif;
+      font-optical-sizing: auto;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .glow {
+      position: fixed;
+      inset: -40% -20% auto;
+      height: 70vh;
+      background: radial-gradient(ellipse 60% 50% at 50% 0%, var(--accent-glow), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 3rem 1.5rem 4rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 6vw, 2.75rem);
+      font-weight: 700;
+      line-height: 1.15;
+      margin: 0 0 0.75rem;
+      letter-spacing: -0.02em;
+    }
+
+    .lead {
+      font-size: 1.125rem;
+      color: var(--muted);
+      max-width: 36ch;
+      margin: 0 auto 2rem;
+    }
+
+    .cta {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .btn-win {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      padding: 1rem 1.75rem;
+      font-family: inherit;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #042f2e;
+      background: linear-gradient(165deg, #2dd4bf, var(--accent));
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      text-decoration: none;
+      box-shadow: 0 4px 24px var(--accent-glow), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+
+    .btn-win:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.05);
+      box-shadow: 0 8px 32px var(--accent-glow), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
+    }
+
+    .btn-win:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
+    .btn-win svg {
+      width: 1.35em;
+      height: 1.35em;
+      flex-shrink: 0;
+    }
+
+    .cta-hint {
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .cta-hint code {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.8em;
+      background: var(--bg-card);
+      padding: 0.15rem 0.4rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+
+    section {
+      margin-top: 2.75rem;
+      padding: 1.75rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    section h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin: 0 0 1rem;
+      color: var(--text);
+    }
+
+    section p {
+      margin: 0 0 1rem;
+      color: var(--muted);
+      font-size: 0.98rem;
+    }
+
+    section p:last-child {
+      margin-bottom: 0;
+    }
+
+    ul.features {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    ul.features li {
+      position: relative;
+      padding-left: 1.35rem;
+      margin-bottom: 0.65rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    ul.features li:last-child {
+      margin-bottom: 0;
+    }
+
+    ul.features li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0.55em;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+
+    footer {
+      margin-top: 3rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    footer a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow" aria-hidden="true"></div>
+  <div class="wrap">
+    <header>
+      <span class="badge">ESP32 · ESP32-C6</span>
+      <h1>ShellOS</h1>
+      <p class="lead">
+        A real shell, filesystem, packages, and WiFi — on a microcontroller. Flash boards from Windows with one download.
+      </p>
+      <div class="cta">
+        <a id="win-dl" class="btn-win" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases/latest/download/ShellOSImager.exe" download="ShellOSImager.exe" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Install for Windows
+        </a>
+        <p class="cta-hint">Downloads <code>ShellOSImager.exe</code> — run it, pick your COM port, and flash. No separate Python install.</p>
+      </div>
+    </header>
+
+    <section aria-labelledby="about-heading">
+      <h2 id="about-heading">What is ShellOS?</h2>
+      <p>
+        ShellOS is built on ESP-IDF and FreeRTOS. You get a serial shell, file commands, WiFi, loadable packages, Lua, and tools like a TCP remote shell — ideas from Unix, scaled for ESP32-class hardware.
+      </p>
+      <ul class="features">
+        <li>Interactive shell with filesystem and network commands</li>
+        <li>Packages you can run, stop, and remove from the device</li>
+        <li>Windows imager with firmware for ESP32-CAM and ESP32-C6 targets</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>
+        Open source on
+        <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards">GitHub</a>
+        ·
+        <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases">All releases</a>
+      </p>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      var REPO = "passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards";
+      var FALLBACK =
+        "https://github.com/" + REPO + "/releases/latest/download/ShellOSImager.exe";
+      var btn = document.getElementById("win-dl");
+      if (!btn) return;
+
+      fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+        headers: { Accept: "application/vnd.github+json" },
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error("release fetch failed");
+          return r.json();
+        })
+        .then(function (data) {
+          var assets = data.assets || [];
+          var exe = assets.find(function (a) {
+            return /\.exe$/i.test(a.name) && /ShellOS/i.test(a.name);
+          });
+          if (!exe) {
+            exe = assets.find(function (a) {
+              return a.name === "ShellOSImager.exe";
+            });
+          }
+          if (exe && exe.browser_download_url) {
+            btn.href = exe.browser_download_url;
+          }
+        })
+        .catch(function () {
+          btn.href = FALLBACK;
+        });
+    })();
+  </script>
+</body>
+</html>
