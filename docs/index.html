@@ -3,302 +3,995 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="ShellOS — a real shell, filesystem, packages, and networking on ESP32. Download the Windows imager to flash your board." />
-  <title>ShellOS — OS for ESP32</title>
+  <meta name="description" content="ShellOS — The first real operating workflow for ESP32. Interactive shell, package management, persistent storage, remote control, and a Windows Imager." />
+  <title>ShellOS — The Operating Layer for ESP32</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;0,14..32,700;0,14..32,800;0,14..32,900;1,14..32,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
   <style>
-    :root {
-      --bg: #0c1222;
-      --bg-card: #141c2f;
-      --border: #243047;
-      --text: #e8edf5;
-      --muted: #94a3b8;
-      --accent: #14b8a6;
-      --accent-dim: #0d9488;
-      --accent-glow: rgba(20, 184, 166, 0.35);
-      --danger: #f43f5e;
-      --radius: 14px;
-      --max: 720px;
-    }
+  /* ─── Reset ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
 
-    * {
-      box-sizing: border-box;
-    }
+  /* ─── Tokens ─────────────────────────────────────────── */
+  :root {
+    --blue:       #2563eb;
+    --blue-bright:#3b82f6;
+    --blue-glow:  rgba(37,99,235,.18);
+    --blue-pale:  #eff6ff;
+    --blue-line:  #bfdbfe;
+    --ink:        #050d1a;
+    --ink-2:      #1e293b;
+    --body:       #374151;
+    --muted:      #6b7280;
+    --border:     #e5eaf5;
+    --surface:    #ffffff;
+    --bg:         #f7f9fc;
+    --max:        1160px;
+    --r:          16px;
+    --r-lg:       24px;
+  }
 
-    html {
-      scroll-behavior: smooth;
-    }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    background: #ffffff;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      font-family: "DM Sans", system-ui, sans-serif;
-      font-optical-sizing: auto;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
+  /* ─── Shared layout ──────────────────────────────────── */
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
 
-    .glow {
-      position: fixed;
-      inset: -40% -20% auto;
-      height: 70vh;
-      background: radial-gradient(ellipse 60% 50% at 50% 0%, var(--accent-glow), transparent 70%);
-      pointer-events: none;
-      z-index: 0;
-    }
+  /* ─── FADE-IN animation ──────────────────────────────── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(28px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fade { opacity: 0; animation: fadeUp .6s ease forwards; }
+  .fade-1 { animation-delay: .05s; }
+  .fade-2 { animation-delay: .15s; }
+  .fade-3 { animation-delay: .25s; }
+  .fade-4 { animation-delay: .35s; }
 
-    .wrap {
-      position: relative;
-      z-index: 1;
-      max-width: var(--max);
-      margin: 0 auto;
-      padding: 3rem 1.5rem 4rem;
-    }
+  /* ══════════════════════════════════════════════════════
+     NAVIGATION
+  ══════════════════════════════════════════════════════ */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 200;
+    height: 62px;
+    background: rgba(255,255,255,.85);
+    backdrop-filter: saturate(180%) blur(14px);
+    border-bottom: 1px solid rgba(229,234,245,.8);
+  }
+  .nav-inner {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 24px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .nav-logo {
+    font-size: 19px;
+    font-weight: 900;
+    letter-spacing: -.045em;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .nav-logo span { color: var(--blue); }
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+  }
+  .nav-links a {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+    text-decoration: none;
+    transition: color .12s;
+  }
+  .nav-links a:hover { color: var(--ink); }
+  .nav-cta {
+    height: 38px;
+    padding: 0 18px;
+    border-radius: 10px;
+    background: var(--blue);
+    color: #fff !important;
+    font-size: 13.5px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background .12s, box-shadow .12s !important;
+    box-shadow: 0 4px 12px rgba(37,99,235,.22);
+  }
+  .nav-cta:hover { background: #1d4ed8 !important; box-shadow: 0 6px 20px rgba(37,99,235,.3) !important; }
 
-    header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+  /* ══════════════════════════════════════════════════════
+     HERO
+  ══════════════════════════════════════════════════════ */
+  .hero-section {
+    padding: 148px 24px 100px;
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+  }
+  /* Background mesh glow */
+  .hero-section::before {
+    content: '';
+    position: absolute;
+    top: -80px; left: 50%; transform: translateX(-50%);
+    width: 900px; height: 600px;
+    background: radial-gradient(ellipse 70% 60% at 50% 40%, rgba(37,99,235,.09) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-inner {
+    max-width: var(--max);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 0;
+    position: relative;
+  }
 
-    .badge {
-      display: inline-block;
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      color: var(--accent);
-      border: 1px solid var(--border);
-      background: var(--bg-card);
-      padding: 0.35rem 0.75rem;
-      border-radius: 999px;
-      margin-bottom: 1rem;
-    }
+  .hero-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--blue-line);
+    background: var(--blue-pale);
+    color: var(--blue);
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .hero-eyebrow::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--blue);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .5; transform: scale(.7); }
+  }
 
-    h1 {
-      font-size: clamp(2rem, 6vw, 2.75rem);
-      font-weight: 700;
-      line-height: 1.15;
-      margin: 0 0 0.75rem;
-      letter-spacing: -0.02em;
-    }
+  .hero-heading {
+    font-size: clamp(46px, 7vw, 88px);
+    font-weight: 900;
+    letter-spacing: -.055em;
+    line-height: 1;
+    color: var(--ink);
+    margin-bottom: 18px;
+    max-width: 14ch;
+  }
+  .hero-heading .blue { color: var(--blue); }
 
-    .lead {
-      font-size: 1.125rem;
-      color: var(--muted);
-      max-width: 36ch;
-      margin: 0 auto 2rem;
-    }
+  .hero-sub {
+    font-size: clamp(17px, 2.2vw, 22px);
+    font-weight: 400;
+    color: var(--body);
+    line-height: 1.65;
+    max-width: 58ch;
+    margin-bottom: 36px;
+  }
 
-    .cta {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 0.75rem;
-    }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .btn-hero {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 54px;
+    padding: 0 28px;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: all .14s;
+  }
+  .btn-hero.primary {
+    background: var(--blue);
+    color: #ffffff;
+    box-shadow: 0 14px 32px rgba(37,99,235,.3);
+  }
+  .btn-hero.primary:hover {
+    background: #1d4ed8;
+    box-shadow: 0 18px 40px rgba(37,99,235,.38);
+    transform: translateY(-2px);
+  }
+  .btn-hero.ghost {
+    background: #ffffff;
+    color: var(--ink-2);
+    border: 1.5px solid var(--border);
+    box-shadow: 0 2px 8px rgba(15,23,42,.06);
+  }
+  .btn-hero.ghost:hover {
+    border-color: #c7d9fb;
+    background: var(--blue-pale);
+    color: var(--blue);
+  }
 
-    .btn-win {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.6rem;
-      padding: 1rem 1.75rem;
-      font-family: inherit;
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: #042f2e;
-      background: linear-gradient(165deg, #2dd4bf, var(--accent));
-      border: none;
-      border-radius: var(--radius);
-      cursor: pointer;
-      text-decoration: none;
-      box-shadow: 0 4px 24px var(--accent-glow), 0 1px 0 rgba(255, 255, 255, 0.2) inset;
-      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
-    }
+  .hero-note {
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--muted);
+  }
 
-    .btn-win:hover {
-      transform: translateY(-2px);
-      filter: brightness(1.05);
-      box-shadow: 0 8px 32px var(--accent-glow), 0 1px 0 rgba(255, 255, 255, 0.25) inset;
-    }
+  /* ── Stats strip ── */
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: hidden;
+    margin-top: 64px;
+    width: 100%;
+    max-width: 820px;
+  }
+  .stat-cell {
+    background: #ffffff;
+    padding: 22px 20px;
+    text-align: center;
+  }
+  .stat-cell .num {
+    display: block;
+    font-size: 28px;
+    font-weight: 900;
+    letter-spacing: -.04em;
+    color: var(--blue);
+    line-height: 1;
+    margin-bottom: 5px;
+  }
+  .stat-cell .lbl {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+  }
 
-    .btn-win:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 3px;
-    }
+  /* ══════════════════════════════════════════════════════
+     DIVIDER / SECTION CHROME
+  ══════════════════════════════════════════════════════ */
+  .section { padding: 80px 24px; }
+  .section.alt { background: var(--bg); }
+  .section-inner { max-width: var(--max); margin: 0 auto; }
 
-    .btn-win svg {
-      width: 1.35em;
-      height: 1.35em;
-      flex-shrink: 0;
-    }
+  .section-label {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 10px;
+  }
+  .section-h {
+    font-size: clamp(30px, 4vw, 50px);
+    font-weight: 900;
+    letter-spacing: -.04em;
+    line-height: 1.05;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+  .section-p {
+    font-size: 17px;
+    font-weight: 400;
+    color: var(--body);
+    line-height: 1.7;
+    max-width: 62ch;
+    margin-bottom: 44px;
+  }
 
-    .cta-hint {
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
+  /* ── Grids ── */
+  .g3 { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+  .g2 { display: grid; grid-template-columns: repeat(2,1fr); gap: 16px; }
 
-    .cta-hint code {
-      font-family: "JetBrains Mono", ui-monospace, monospace;
-      font-size: 0.8em;
-      background: var(--bg-card);
-      padding: 0.15rem 0.4rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-    }
+  /* ══════════════════════════════════════════════════════
+     FEATURE CARDS
+  ══════════════════════════════════════════════════════ */
+  .feat-card {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 24px;
+    transition: box-shadow .15s, transform .15s, border-color .15s;
+  }
+  .feat-card:hover {
+    box-shadow: 0 8px 28px rgba(37,99,235,.09), 0 1px 4px rgba(15,23,42,.06);
+    border-color: var(--blue-line);
+    transform: translateY(-3px);
+  }
+  .feat-icon {
+    width: 44px; height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--blue-pale) 0%, #dbeafe 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    margin-bottom: 14px;
+  }
+  .feat-card h3 {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--ink);
+    margin-bottom: 8px;
+    letter-spacing: -.02em;
+  }
+  .feat-card p {
+    font-size: 14.5px;
+    font-weight: 400;
+    color: var(--body);
+    line-height: 1.65;
+  }
 
-    section {
-      margin-top: 2.75rem;
-      padding: 1.75rem;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-    }
+  /* ══════════════════════════════════════════════════════
+     API BADGE ROW
+  ══════════════════════════════════════════════════════ */
+  .badge-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 28px;
+  }
+  .badge {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: var(--ink);
+    color: #7dd3fc;
+    border: 1px solid #1e293b;
+    letter-spacing: 0;
+  }
 
-    section h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin: 0 0 1rem;
-      color: var(--text);
-    }
+  /* ══════════════════════════════════════════════════════
+     WORKFLOW SPLIT
+  ══════════════════════════════════════════════════════ */
+  .workflow-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .workflow-card {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 28px;
+  }
+  .workflow-card .wc-label {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 6px;
+  }
+  .workflow-card h3 {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--ink);
+    letter-spacing: -.03em;
+    margin-bottom: 20px;
+  }
 
-    section p {
-      margin: 0 0 1rem;
-      color: var(--muted);
-      font-size: 0.98rem;
-    }
+  .step-list { display: flex; flex-direction: column; gap: 12px; }
+  .step {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .step-n {
+    flex-shrink: 0;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--blue);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 800;
+    display: grid;
+    place-items: center;
+    margin-top: 2px;
+  }
+  .step-body { font-size: 14.5px; font-weight: 400; color: var(--body); line-height: 1.6; }
+  .step-body strong { font-weight: 700; color: var(--ink-2); }
 
-    section p:last-child {
-      margin-bottom: 0;
-    }
+  /* ══════════════════════════════════════════════════════
+     ARCHITECTURE / DARK PANEL
+  ══════════════════════════════════════════════════════ */
+  .dark-panel {
+    background: var(--ink);
+    border-radius: var(--r-lg);
+    padding: 48px;
+    color: #ffffff;
+  }
+  .dark-panel .section-label { color: #7dd3fc; }
+  .dark-panel .section-h { color: #ffffff; }
+  .dark-panel .section-p { color: #94a3b8; margin-bottom: 28px; }
 
-    ul.features {
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
+  .arch-grid {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    gap: 1px;
+    background: rgba(255,255,255,.08);
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.08);
+  }
+  .arch-cell {
+    padding: 22px 20px;
+    background: rgba(255,255,255,.03);
+    transition: background .15s;
+  }
+  .arch-cell:hover { background: rgba(255,255,255,.07); }
+  .arch-cell .ac-num {
+    font-size: 11px;
+    font-weight: 700;
+    color: #3b82f6;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .arch-cell h4 {
+    font-size: 15px;
+    font-weight: 800;
+    color: #f1f5f9;
+    margin-bottom: 6px;
+  }
+  .arch-cell p {
+    font-size: 13px;
+    font-weight: 400;
+    color: #94a3b8;
+    line-height: 1.6;
+  }
 
-    ul.features li {
-      position: relative;
-      padding-left: 1.35rem;
-      margin-bottom: 0.65rem;
-      color: var(--muted);
-      font-size: 0.95rem;
-    }
+  /* ══════════════════════════════════════════════════════
+     HARDWARE CARDS
+  ══════════════════════════════════════════════════════ */
+  .hw-card {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .hw-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--blue-pale);
+    border: 1px solid var(--blue-line);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--blue);
+    align-self: flex-start;
+  }
+  .hw-card h3 {
+    font-size: 19px;
+    font-weight: 900;
+    color: var(--ink);
+    letter-spacing: -.02em;
+  }
+  .hw-card p {
+    font-size: 14.5px;
+    color: var(--body);
+    line-height: 1.65;
+  }
+  .hw-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .hw-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-2);
+  }
+  .hw-list li::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--blue);
+    flex-shrink: 0;
+  }
 
-    ul.features li:last-child {
-      margin-bottom: 0;
-    }
+  /* ══════════════════════════════════════════════════════
+     CTA SECTION
+  ══════════════════════════════════════════════════════ */
+  .cta-section {
+    padding: 80px 24px;
+    background: linear-gradient(155deg, #1a3a8c 0%, #1e40af 45%, #2563eb 100%);
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-section::before {
+    content: '';
+    position: absolute;
+    top: -100px; left: 50%; transform: translateX(-50%);
+    width: 700px; height: 500px;
+    background: radial-gradient(ellipse, rgba(255,255,255,.06) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .cta-section .section-h { color: #ffffff; }
+  .cta-section p {
+    font-size: 18px;
+    color: rgba(255,255,255,.75);
+    margin: 12px auto 36px;
+    max-width: 54ch;
+  }
+  .cta-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    justify-content: center;
+  }
+  .btn-cta-white {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 54px;
+    padding: 0 28px;
+    border-radius: 14px;
+    background: #ffffff;
+    color: var(--blue);
+    font-size: 16px;
+    font-weight: 800;
+    text-decoration: none;
+    box-shadow: 0 12px 28px rgba(0,0,0,.18);
+    transition: transform .14s, box-shadow .14s;
+  }
+  .btn-cta-white:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(0,0,0,.24); }
+  .btn-cta-ghost {
+    display: inline-flex;
+    align-items: center;
+    height: 54px;
+    padding: 0 28px;
+    border-radius: 14px;
+    border: 1.5px solid rgba(255,255,255,.35);
+    background: rgba(255,255,255,.07);
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background .14s;
+  }
+  .btn-cta-ghost:hover { background: rgba(255,255,255,.15); }
 
-    ul.features li::before {
-      content: "";
-      position: absolute;
-      left: 0;
-      top: 0.55em;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 10px var(--accent);
-    }
+  /* ══════════════════════════════════════════════════════
+     FOOTER
+  ══════════════════════════════════════════════════════ */
+  footer {
+    background: var(--ink);
+    padding: 40px 24px;
+  }
+  .footer-inner {
+    max-width: var(--max);
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+  .footer-logo {
+    font-size: 20px;
+    font-weight: 900;
+    letter-spacing: -.04em;
+    color: #ffffff;
+    text-decoration: none;
+  }
+  .footer-logo span { color: var(--blue-bright); }
+  .footer-links {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .footer-links a {
+    font-size: 14px;
+    font-weight: 600;
+    color: #64748b;
+    text-decoration: none;
+    transition: color .12s;
+  }
+  .footer-links a:hover { color: #94a3b8; }
+  .footer-copy {
+    font-size: 13px;
+    color: #475569;
+    width: 100%;
+    text-align: center;
+    padding-top: 20px;
+    border-top: 1px solid #1e293b;
+  }
 
-    footer {
-      margin-top: 3rem;
-      text-align: center;
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
-
-    footer a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    footer a:hover {
-      text-decoration: underline;
-    }
+  /* ══════════════════════════════════════════════════════
+     RESPONSIVE
+  ══════════════════════════════════════════════════════ */
+  @media (max-width: 860px) {
+    .g3, .g2, .workflow-grid, .arch-grid { grid-template-columns: 1fr; }
+    .stats-strip { grid-template-columns: repeat(2,1fr); }
+    .hero-section { padding: 120px 24px 60px; }
+    .dark-panel { padding: 28px 20px; }
+    .section { padding: 52px 24px; }
+    .nav-links .nav-sep { display: none; }
+  }
+  @media (max-width: 560px) {
+    .stats-strip { grid-template-columns: 1fr 1fr; }
+    .nav-links { gap: 14px; }
+  }
   </style>
 </head>
 <body>
-  <div class="glow" aria-hidden="true"></div>
-  <div class="wrap">
-    <header>
-      <span class="badge">ESP32 · ESP32-C6</span>
-      <h1>ShellOS</h1>
-      <p class="lead">
-        A real shell, filesystem, packages, and WiFi — on a microcontroller. Flash boards from Windows with one download.
-      </p>
-      <div class="cta">
-        <a id="win-dl" class="btn-win" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases/latest/download/ShellOSImager.exe" download="ShellOSImager.exe" rel="noopener noreferrer">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          Install for Windows
-        </a>
-        <p class="cta-hint">Downloads <code>ShellOSImager.exe</code> — run it, pick your COM port, and flash. No separate Python install.</p>
-      </div>
-    </header>
 
-    <section aria-labelledby="about-heading">
-      <h2 id="about-heading">What is ShellOS?</h2>
-      <p>
-        ShellOS is built on ESP-IDF and FreeRTOS. You get a serial shell, file commands, WiFi, loadable packages, Lua, and tools like a TCP remote shell — ideas from Unix, scaled for ESP32-class hardware.
-      </p>
-      <ul class="features">
-        <li>Interactive shell with filesystem and network commands</li>
-        <li>Packages you can run, stop, and remove from the device</li>
-        <li>Windows imager with firmware for ESP32-CAM and ESP32-C6 targets</li>
-      </ul>
-    </section>
-
-    <footer>
-      <p>
-        Open source on
-        <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards">GitHub</a>
-        ·
-        <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases">All releases</a>
-      </p>
-    </footer>
+<!-- ════════════════════════════════════════
+     NAVIGATION
+════════════════════════════════════════ -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="#">Shell<span>OS</span></a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#workflow">Workflow</a>
+      <a href="#hardware">Hardware</a>
+      <a id="nav-download" class="nav-cta" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases/latest/download/ShellOSImager.exe" rel="noopener noreferrer">
+        ↓ Download
+      </a>
+    </div>
   </div>
+</nav>
 
-  <script>
-    (function () {
-      var REPO = "passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards";
-      var FALLBACK =
-        "https://github.com/" + REPO + "/releases/latest/download/ShellOSImager.exe";
-      var btn = document.getElementById("win-dl");
-      if (!btn) return;
+<!-- ════════════════════════════════════════
+     HERO
+════════════════════════════════════════ -->
+<section class="hero-section">
+  <div class="hero-inner">
+    <div class="hero-eyebrow fade fade-1">Now Available — Free &amp; Open Source</div>
+    <h1 class="hero-heading fade fade-2">
+      The operating<br>layer for <span class="blue">ESP32.</span>
+    </h1>
+    <p class="hero-sub fade fade-3">
+      ShellOS gives ESP32 microcontrollers a real operating workflow — interactive shell,
+      persistent package management, remote control, and a polished Windows Imager
+      that handles everything from first flash to package distribution.
+    </p>
+    <div class="hero-actions fade fade-4">
+      <a id="download-btn" class="btn-hero primary" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases/latest/download/ShellOSImager.exe" rel="noopener noreferrer">
+        ↓ &nbsp;Download ShellOS Imager
+      </a>
+      <a class="btn-hero ghost" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards" rel="noopener noreferrer" target="_blank">
+        View Source on GitHub →
+      </a>
+    </div>
+    <p id="download-meta" class="hero-note fade fade-4">Checking latest release…</p>
 
-      fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
-        headers: { Accept: "application/vnd.github+json" },
-      })
-        .then(function (r) {
-          if (!r.ok) throw new Error("release fetch failed");
-          return r.json();
-        })
-        .then(function (data) {
-          var assets = data.assets || [];
-          var exe = assets.find(function (a) {
-            return /\.exe$/i.test(a.name) && /ShellOS/i.test(a.name);
-          });
-          if (!exe) {
-            exe = assets.find(function (a) {
-              return a.name === "ShellOSImager.exe";
-            });
-          }
-          if (exe && exe.browser_download_url) {
-            btn.href = exe.browser_download_url;
-          }
-        })
-        .catch(function () {
-          btn.href = FALLBACK;
-        });
-    })();
-  </script>
+    <div class="stats-strip fade fade-4">
+      <div class="stat-cell">
+        <span class="num">2</span>
+        <span class="lbl">Supported Boards</span>
+      </div>
+      <div class="stat-cell">
+        <span class="num">6</span>
+        <span class="lbl">Platform Layers</span>
+      </div>
+      <div class="stat-cell">
+        <span class="num">8080</span>
+        <span class="lbl">HTTP Package API</span>
+      </div>
+      <div class="stat-cell">
+        <span class="num">2323</span>
+        <span class="lbl">TCP Shell Port</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     FEATURES
+════════════════════════════════════════ -->
+<section class="section" id="features">
+  <div class="section-inner">
+    <p class="section-label">Platform</p>
+    <h2 class="section-h">Six integrated layers.<br>One complete platform.</h2>
+    <p class="section-p">
+      ShellOS is not just a firmware. It is a full operating platform covering shell access,
+      package lifecycle, persistent storage, networking, a build toolchain, and package distribution —
+      all working together seamlessly.
+    </p>
+    <div class="g3">
+      <article class="feat-card">
+        <div class="feat-icon">💻</div>
+        <h3>Interactive Shell</h3>
+        <p>A full command-driven workflow for diagnostics, runtime visibility, task inspection, and network operations — accessible over USB serial or TCP.</p>
+      </article>
+      <article class="feat-card">
+        <div class="feat-icon">📦</div>
+        <h3>Package Lifecycle</h3>
+        <p>Install, start, stop, and remove software packages on the device at runtime — with no firmware reflash required. Operations take seconds, not minutes.</p>
+      </article>
+      <article class="feat-card">
+        <div class="feat-icon">💾</div>
+        <h3>Persistent Storage</h3>
+        <p>LittleFS-backed filesystem at <code style="font-family:monospace;color:var(--blue);font-size:13px">/root</code> with isolated per-package data and log directories that survive power cycles.</p>
+      </article>
+      <article class="feat-card">
+        <div class="feat-icon">📡</div>
+        <h3>Remote Access</h3>
+        <p>TCP shell server on port 2323 for remote command sessions and a full HTTP REST API on port 8080 for programmatic package lifecycle control.</p>
+      </article>
+      <article class="feat-card">
+        <div class="feat-icon">🔧</div>
+        <h3>Package Toolchain</h3>
+        <p>Transpile Arduino-style <code style="font-family:monospace;color:var(--blue);font-size:13px">.ino</code> sketches to Lua and compile <code style="font-family:monospace;color:var(--blue);font-size:13px">.shpkg</code> packages directly from the desktop Imager in one click.</p>
+      </article>
+      <article class="feat-card">
+        <div class="feat-icon">🔗</div>
+        <h3>App Store &amp; Distribution</h3>
+        <p>Publish packages to GitHub with one click, share a repository link, and let anyone import with automatic SHA-256 integrity verification before install.</p>
+      </article>
+    </div>
+
+    <div class="badge-row">
+      <span class="badge">POST /pkg/upload</span>
+      <span class="badge">GET /pkg/list</span>
+      <span class="badge">POST /pkg/run/:name</span>
+      <span class="badge">POST /pkg/stop/:name</span>
+      <span class="badge">POST /pkg/remove/:name</span>
+      <span class="badge">GET /pkg/logs/:name</span>
+      <span class="badge">GET /pkg/info/:name</span>
+      <span class="badge">TCP shell :2323</span>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     ARCHITECTURE DARK PANEL
+════════════════════════════════════════ -->
+<section class="section alt">
+  <div class="section-inner">
+    <div class="dark-panel">
+      <p class="section-label">Architecture</p>
+      <h2 class="section-h">Built for operational workflows,<br>not just demo sketches.</h2>
+      <p class="section-p">
+        Every layer is purpose-built so the system stays stable under real continuous-operation conditions —
+        persistent state, live service management, and multi-package environments.
+      </p>
+      <div class="arch-grid">
+        <div class="arch-cell">
+          <div class="ac-num">Layer 01</div>
+          <h4>Kernel &amp; Runtime</h4>
+          <p>Lua-based task scheduler on top of ESP-IDF. Packages run as isolated Lua tasks managed by the core runtime.</p>
+        </div>
+        <div class="arch-cell">
+          <div class="ac-num">Layer 02</div>
+          <h4>Filesystem</h4>
+          <p>LittleFS provides wear-leveled, crash-resilient storage. Each package gets its own directory at <code style="font-family:monospace;color:#7dd3fc;font-size:12px">/root/packages/&lt;name&gt;</code>.</p>
+        </div>
+        <div class="arch-cell">
+          <div class="ac-num">Layer 03</div>
+          <h4>Network Stack</h4>
+          <p>Dual interface: TCP shell server for interactive remote sessions and an HTTP REST server for API-driven automation.</p>
+        </div>
+        <div class="arch-cell">
+          <div class="ac-num">Layer 04</div>
+          <h4>Package Format</h4>
+          <p>The <code style="font-family:monospace;color:#7dd3fc;font-size:12px">.shpkg</code> binary bundles compiled Lua, manifest JSON, and assets in a single portable archive with embedded metadata.</p>
+        </div>
+        <div class="arch-cell">
+          <div class="ac-num">Layer 05</div>
+          <h4>Toolchain</h4>
+          <p>Arduino-to-Lua transpiler converts familiar <code style="font-family:monospace;color:#7dd3fc;font-size:12px">.ino</code> syntax so existing embedded developers have a zero-learning-curve onramp.</p>
+        </div>
+        <div class="arch-cell">
+          <div class="ac-num">Layer 06</div>
+          <h4>Distribution</h4>
+          <p>Git-based publish flow with <code style="font-family:monospace;color:#7dd3fc;font-size:12px">shellos-package.json</code> manifests and SHA-256 checksums for verifiable, trustworthy package sharing.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     WORKFLOW
+════════════════════════════════════════ -->
+<section class="section" id="workflow">
+  <div class="section-inner">
+    <p class="section-label">Windows Imager</p>
+    <h2 class="section-h">From zero to running in minutes.</h2>
+    <p class="section-p">
+      The ShellOS Imager bundles every tool you need — firmware flashing, serial monitoring,
+      package building, deployment, and the App Store — into one Windows desktop application.
+    </p>
+    <div class="workflow-grid">
+      <div class="workflow-card">
+        <div class="wc-label">Track 01</div>
+        <h3>Flash &amp; Connect</h3>
+        <div class="step-list">
+          <div class="step">
+            <span class="step-n">1</span>
+            <div class="step-body">Open ShellOS Imager. Select your <strong>board target</strong> (ESP32-CAM or ESP32-C6) and choose the USB serial port.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">2</span>
+            <div class="step-body">Click <strong>Flash</strong>. The Imager writes the bootloader, partition table, and full OS image in one operation.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">3</span>
+            <div class="step-body">Use the <strong>serial monitor</strong> at 115200 baud for first-boot WiFi setup. Board IP is shown on-screen once connected.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">4</span>
+            <div class="step-body">Switch to the <strong>Packages tab</strong>, enter the board IP, and connect to load the live installed package inventory.</div>
+          </div>
+        </div>
+      </div>
+      <div class="workflow-card">
+        <div class="wc-label">Track 02</div>
+        <h3>Build, Deploy &amp; Share</h3>
+        <div class="step-list">
+          <div class="step">
+            <span class="step-n">1</span>
+            <div class="step-body">Select an Arduino-style <strong>.ino sketch</strong>. Click <strong>Build</strong> to transpile and compile into a <code style="font-family:monospace;color:var(--blue)">.shpkg</code> package.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">2</span>
+            <div class="step-body">Click <strong>Upload &amp; Install</strong>. The package is deployed to the board over WiFi and appears in the installed packages table immediately.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">3</span>
+            <div class="step-body">Use the table to <strong>Run, Stop,</strong> or <strong>Remove</strong> any installed package without touching the base firmware.</div>
+          </div>
+          <div class="step">
+            <span class="step-n">4</span>
+            <div class="step-body">Hit <strong>Publish</strong> to push the package to your GitHub repo. Share the link — anyone can import and verify it instantly.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     HARDWARE
+════════════════════════════════════════ -->
+<section class="section alt" id="hardware">
+  <div class="section-inner">
+    <p class="section-label">Hardware</p>
+    <h2 class="section-h">Supported platforms.</h2>
+    <p class="section-p">
+      ShellOS ships pre-built firmware for two of the most capable and accessible ESP32 board classes —
+      ready to flash immediately from the Imager.
+    </p>
+    <div class="g2">
+      <div class="hw-card">
+        <span class="hw-chip">✔ Supported</span>
+        <h3>ESP32-CAM</h3>
+        <p>AI-Thinker class ESP32 board with camera module. Perfect for vision-enabled IoT projects, remote monitoring, and anything needing both compute and optics.</p>
+        <ul class="hw-list">
+          <li>Full ShellOS feature set</li>
+          <li>Camera subsystem access</li>
+          <li>OV2640 2MP camera support</li>
+          <li>Pre-built firmware included</li>
+        </ul>
+      </div>
+      <div class="hw-card">
+        <span class="hw-chip">✔ Supported</span>
+        <h3>ESP32-C6</h3>
+        <p>Espressif's modern RISC-V based ESP32 with Thread, Zigbee, WiFi 6, and BLE 5.0 — the ideal platform for next-generation smart home and industrial IoT.</p>
+        <ul class="hw-list">
+          <li>Full ShellOS feature set</li>
+          <li>WiFi 6 + Thread + Zigbee</li>
+          <li>RISC-V architecture</li>
+          <li>Pre-built firmware included</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     CTA
+════════════════════════════════════════ -->
+<section class="cta-section">
+  <div class="wrap" style="position:relative;z-index:1">
+    <h2 class="section-h" style="margin-bottom:0">Ready to ship on ESP32?</h2>
+    <p>Download the Imager, flash your board in minutes, and start building real operating workflows — not just demo sketches.</p>
+    <div class="cta-actions">
+      <a id="cta-download" class="btn-cta-white" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases/latest/download/ShellOSImager.exe" rel="noopener noreferrer">
+        ↓ &nbsp;Download ShellOS Imager
+      </a>
+      <a class="btn-cta-ghost" href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards" rel="noopener noreferrer" target="_blank">
+        View on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════ -->
+<footer>
+  <div class="footer-inner">
+    <a class="footer-logo" href="#">Shell<span>OS</span></a>
+    <div class="footer-links">
+      <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards/blob/main/PACKAGES.md" target="_blank" rel="noopener">Docs</a>
+    </div>
+    <div class="footer-copy">ShellOS — The operating layer for ESP32 microcontrollers. Open source, free forever.</div>
+  </div>
+</footer>
+
+<!-- ════════════════════════════════════════
+     DYNAMIC RELEASE SCRIPT
+════════════════════════════════════════ -->
+<script>
+(function () {
+  var REPO = "passionateSandy2004/ShellOS---OS-made-Just-For-ESP32-Boards";
+  var fallback = "https://github.com/" + REPO + "/releases/latest/download/ShellOSImager.exe";
+  var btns = [
+    document.getElementById("download-btn"),
+    document.getElementById("nav-download"),
+    document.getElementById("cta-download")
+  ];
+  var meta = document.getElementById("download-meta");
+
+  function setHref(url) {
+    btns.forEach(function(b){ if(b) b.href = url; });
+  }
+
+  function fmtBytes(n) {
+    if (!n || n <= 0) return "";
+    var u = ["B","KB","MB","GB"];
+    var i = Math.floor(Math.log(n) / Math.log(1024));
+    return (n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + " " + u[i];
+  }
+
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+    headers: { Accept: "application/vnd.github+json" }
+  })
+  .then(function(r){ if (!r.ok) throw new Error(); return r.json(); })
+  .then(function(rel){
+    var exe = (rel.assets || []).find(function(a){
+      return /shellosimager/i.test(a.name) && /\.exe$/i.test(a.name);
+    });
+    if (!exe) { setHref(fallback); if(meta) meta.textContent = ""; return; }
+    setHref(exe.browser_download_url);
+    var tag  = rel.tag_name || "latest";
+    var size = fmtBytes(exe.size);
+    if (meta) meta.textContent = exe.name + (size ? " · " + size : "") + " · " + tag;
+  })
+  .catch(function(){
+    setHref(fallback);
+    if (meta) meta.textContent = "";
+  });
+})();
+</script>
 </body>
 </html>

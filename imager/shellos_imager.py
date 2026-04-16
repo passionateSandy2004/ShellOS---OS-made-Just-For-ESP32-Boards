@@ -7,15 +7,19 @@ Requires: PyQt6, pyserial, esptool (see requirements.txt)
 from __future__ import annotations
 
 import codecs
+import hashlib
 import json
 import re
 import socket
 from functools import partial
+import subprocess
 import sys
+import tempfile
 import time
 import threading
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 
@@ -129,6 +133,9 @@ HTTP_UPLOAD_PORT = 8080
 # TCP shell port (netsh) — PuTTY RAW; imager uses HTTP on HTTP_UPLOAD_PORT instead
 SHELL_TCP_PORT = 2323
 TCP_PROBE_TIMEOUT_S = 3.0
+# App-store manifest stored in shared GitHub repos.
+# Schema (MVP): name, version, shpkg_file, sha256, description?, author?, published_at?, source_repo?
+STORE_MANIFEST_FILENAME = "shellos-package.json"
 # Banner + box lines + ESP-IDF logs need a wide terminal (see kernel_print_banner).
 SERIAL_MONITOR_MIN_COLUMNS = 122
 SERIAL_MONITOR_OPEN_COLUMNS = 132
@@ -1206,6 +1213,7 @@ class ShellOSImager(QWidget):
         self._pkg_shpkg_deploy.setPlaceholderText("Set after Build, or browse to an existing .shpkg")
         self._pkg_shpkg_deploy.setMinimumHeight(ctrl_h)
         self._pkg_shpkg_deploy.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._pkg_shpkg_deploy.textChanged.connect(self._pkg_shpkg_changed)
         pkg_row.addWidget(self._pkg_shpkg_deploy, stretch=1)
         btn_shpkg = QPushButton("Browse…")
         btn_shpkg.setMinimumHeight(ctrl_h)
@@ -1229,13 +1237,6 @@ class ShellOSImager(QWidget):
         self._pkg_deploy_btn.setToolTip("POST the selected .shpkg to the device")
         self._pkg_deploy_btn.clicked.connect(self._pkg_deploy)
         btn_row.addWidget(self._pkg_deploy_btn)
-
-        self._pkg_build_deploy_btn = QPushButton("Build + deploy + run")
-        self._pkg_build_deploy_btn.setObjectName("pkgDeployBtn")
-        self._pkg_build_deploy_btn.setMinimumHeight(42)
-        self._pkg_build_deploy_btn.setToolTip("Build, upload, and start the package")
-        self._pkg_build_deploy_btn.clicked.connect(lambda: self._pkg_build(deploy_after=True))
-        btn_row.addWidget(self._pkg_build_deploy_btn)
         btn_row.addStretch(1)
         bv.addLayout(btn_row)
 
@@ -1244,7 +1245,101 @@ class ShellOSImager(QWidget):
         self._pkg_deploy_status.setWordWrap(True)
         bv.addWidget(self._pkg_deploy_status)
 
+        pub_head = QLabel("Publish package to GitHub")
+        pub_head.setObjectName("flashSubheading")
+        bv.addWidget(pub_head)
+
+        repo_row = QHBoxLayout()
+        repo_row.setSpacing(14)
+        repo_row.addWidget(self._flash_field_label("Publish repo"))
+        self._pkg_publish_repo = QLineEdit()
+        self._pkg_publish_repo.setPlaceholderText("https://github.com/<owner>/<repo>  or  owner/repo")
+        self._pkg_publish_repo.setMinimumHeight(ctrl_h)
+        self._pkg_publish_repo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._pkg_publish_repo.textChanged.connect(self._pkg_store_inputs_changed)
+        repo_row.addWidget(self._pkg_publish_repo, stretch=1)
+        bv.addLayout(repo_row)
+
+        pub_row = QHBoxLayout()
+        pub_row.setSpacing(10)
+        self._pkg_publish_btn = QPushButton("Publish package")
+        self._pkg_publish_btn.setObjectName("pkgDeployBtn")
+        self._pkg_publish_btn.setMinimumHeight(42)
+        self._pkg_publish_btn.clicked.connect(self._pkg_publish_to_github)
+        pub_row.addWidget(self._pkg_publish_btn)
+        pub_row.addStretch(1)
+        bv.addLayout(pub_row)
+
+        self._pkg_publish_status = QLabel("")
+        self._pkg_publish_status.setObjectName("statusLabel")
+        self._pkg_publish_status.setWordWrap(True)
+        bv.addWidget(self._pkg_publish_status)
+
         top_layout.addWidget(build)
+
+        # ── App store import card ─────────────────────────────────────────────
+        store = QFrame()
+        store.setObjectName("pkgSectionCard")
+        sv = QVBoxLayout(store)
+        sv.setContentsMargins(24, 22, 24, 22)
+        sv.setSpacing(14)
+
+        st = QLabel("Install from shared package repo")
+        st.setObjectName("flashCardTitle")
+        sv.addWidget(st)
+        ss = QLabel(
+            "Paste a shared GitHub repo link, fetch package metadata, and verify SHA-256 "
+            "before preparing install."
+        )
+        ss.setObjectName("flashCardSubtitle")
+        ss.setWordWrap(True)
+        sv.addWidget(ss)
+
+        import_row = QHBoxLayout()
+        import_row.setSpacing(14)
+        import_row.addWidget(self._flash_field_label("Repo link"))
+        self._pkg_import_repo = QLineEdit()
+        self._pkg_import_repo.setPlaceholderText("https://github.com/<owner>/<repo>[/tree/<branch>]")
+        self._pkg_import_repo.setMinimumHeight(ctrl_h)
+        self._pkg_import_repo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        import_row.addWidget(self._pkg_import_repo, stretch=1)
+        self._pkg_import_btn = QPushButton("Fetch + verify")
+        self._pkg_import_btn.setObjectName("pkgActionBtn")
+        self._pkg_import_btn.setMinimumHeight(ctrl_h)
+        self._pkg_import_btn.clicked.connect(self._pkg_import_repo_package)
+        import_row.addWidget(self._pkg_import_btn)
+        sv.addLayout(import_row)
+
+        search_row = QHBoxLayout()
+        search_row.setSpacing(14)
+        search_row.addWidget(self._flash_field_label("Search recent"))
+        self._pkg_recent_search = QLineEdit()
+        self._pkg_recent_search.setPlaceholderText("Filter by package name, version, or repo")
+        self._pkg_recent_search.setMinimumHeight(ctrl_h)
+        self._pkg_recent_search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._pkg_recent_search.textChanged.connect(self._pkg_store_filter_recent)
+        search_row.addWidget(self._pkg_recent_search, stretch=1)
+        sv.addLayout(search_row)
+
+        recent_row = QHBoxLayout()
+        recent_row.setSpacing(14)
+        recent_row.addWidget(self._flash_field_label("Recent repos"))
+        self._pkg_recent_combo = QComboBox()
+        self._pkg_recent_combo.setMinimumHeight(ctrl_h)
+        self._pkg_recent_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        recent_row.addWidget(self._pkg_recent_combo, stretch=1)
+        self._pkg_recent_use_btn = QPushButton("Use selected")
+        self._pkg_recent_use_btn.setMinimumHeight(ctrl_h)
+        self._pkg_recent_use_btn.clicked.connect(self._pkg_use_recent_repo)
+        recent_row.addWidget(self._pkg_recent_use_btn)
+        sv.addLayout(recent_row)
+
+        self._pkg_store_status = QLabel("")
+        self._pkg_store_status.setObjectName("statusLabel")
+        self._pkg_store_status.setWordWrap(True)
+        sv.addWidget(self._pkg_store_status)
+
+        top_layout.addWidget(store)
 
         # ── Installed packages (fills remaining height) ────────────────────────
         table_card = QFrame()
@@ -1335,6 +1430,13 @@ class ShellOSImager(QWidget):
         saved_ip = self._pkg_settings.value("pkg/device_ip", "")
         if saved_ip:
             self._pkg_ip.setText(str(saved_ip))
+        self._pkg_publish_repo.setText(str(self._pkg_settings.value("pkg/publish_repo", "") or ""))
+        self._pkg_import_repo.setText(str(self._pkg_settings.value("pkg/import_repo", "") or ""))
+        self._pkg_store_recent: list[dict[str, str]] = self._pkg_load_recent_repos()
+        self._pkg_verified_shpkg_path: str | None = None
+        self._pkg_verified_meta: dict[str, str] | None = None
+        self._pkg_store_filter_recent()
+        self._pkg_store_inputs_changed()
 
         self._pkg_auto_refresh = QTimer(self)
         self._pkg_auto_refresh.setInterval(8000)
@@ -1348,6 +1450,506 @@ class ShellOSImager(QWidget):
         self._pkg_log.moveCursor(QTextCursor.MoveOperation.End)
         self._pkg_log.insertPlainText(msg + "\n")
         self._pkg_log.moveCursor(QTextCursor.MoveOperation.End)
+
+    def _pkg_shpkg_changed(self, text: str) -> None:
+        path = text.strip()
+        if self._pkg_verified_shpkg_path:
+            try:
+                same = Path(path).resolve() == Path(self._pkg_verified_shpkg_path).resolve()
+            except Exception:
+                same = path == self._pkg_verified_shpkg_path
+            if not same:
+                self._pkg_verified_shpkg_path = None
+                self._pkg_verified_meta = None
+        self._pkg_store_inputs_changed()
+
+    def _pkg_store_inputs_changed(self, *_: object) -> None:
+        publish_repo = self._pkg_publish_repo.text().strip()
+        import_repo = self._pkg_import_repo.text().strip()
+        shpkg_path = self._pkg_shpkg_deploy.text().strip()
+        shpkg_ok = bool(shpkg_path and Path(shpkg_path).is_file())
+        self._pkg_publish_btn.setEnabled(bool(publish_repo and shpkg_ok))
+        self._pkg_import_btn.setEnabled(bool(import_repo))
+        self._pkg_settings.setValue("pkg/publish_repo", publish_repo)
+        self._pkg_settings.setValue("pkg/import_repo", import_repo)
+
+    def _pkg_store_filter_recent(self, *_: object) -> None:
+        query = self._pkg_recent_search.text().strip().lower()
+        self._pkg_recent_combo.clear()
+        entries = self._pkg_store_recent
+        if query:
+            entries = [
+                e for e in entries
+                if query in str(e.get("name", "")).lower()
+                or query in str(e.get("version", "")).lower()
+                or query in str(e.get("repo_url", "")).lower()
+            ]
+        for e in entries:
+            label = f"{e.get('name', '?')}  {e.get('version', '')}  —  {e.get('repo_url', '')}"
+            self._pkg_recent_combo.addItem(label, userData=e)
+        if self._pkg_recent_combo.count() == 0:
+            self._pkg_recent_combo.addItem("(no recent repos)", userData=None)
+            self._pkg_recent_use_btn.setEnabled(False)
+        else:
+            self._pkg_recent_use_btn.setEnabled(True)
+
+    def _pkg_load_recent_repos(self) -> list[dict[str, str]]:
+        raw = str(self._pkg_settings.value("pkg/store_recent_repos", "") or "").strip()
+        if not raw:
+            return []
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return []
+        out: list[dict[str, str]] = []
+        if not isinstance(payload, list):
+            return out
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            repo_url = str(item.get("repo_url", "")).strip()
+            if not repo_url:
+                continue
+            out.append(
+                {
+                    "repo_url": repo_url,
+                    "branch": str(item.get("branch", "")).strip(),
+                    "name": str(item.get("name", "")).strip(),
+                    "version": str(item.get("version", "")).strip(),
+                    "sha256": str(item.get("sha256", "")).strip().lower(),
+                    "shpkg_file": str(item.get("shpkg_file", "")).strip(),
+                }
+            )
+        return out[:20]
+
+    def _pkg_save_recent_repos(self) -> None:
+        self._pkg_settings.setValue("pkg/store_recent_repos", json.dumps(self._pkg_store_recent[:20]))
+
+    def _pkg_add_recent_repo(self, entry: dict[str, str]) -> None:
+        repo_url = entry.get("repo_url", "").strip()
+        if not repo_url:
+            return
+        key = (repo_url.lower(), entry.get("branch", "").strip().lower())
+        keep: list[dict[str, str]] = []
+        for item in self._pkg_store_recent:
+            cur_key = (
+                str(item.get("repo_url", "")).strip().lower(),
+                str(item.get("branch", "")).strip().lower(),
+            )
+            if cur_key != key:
+                keep.append(item)
+        self._pkg_store_recent = [entry] + keep
+        self._pkg_store_recent = self._pkg_store_recent[:20]
+        self._pkg_save_recent_repos()
+        self._pkg_store_filter_recent()
+
+    def _pkg_use_recent_repo(self) -> None:
+        entry = self._pkg_recent_combo.currentData()
+        if not isinstance(entry, dict):
+            return
+        repo_url = str(entry.get("repo_url", "")).strip()
+        if not repo_url:
+            return
+        self._pkg_import_repo.setText(repo_url)
+
+    @staticmethod
+    def _pkg_parse_repo_link(link: str) -> tuple[str, str, str | None]:
+        s = link.strip()
+        if not s:
+            raise ValueError("Repository link is empty.")
+        owner = ""
+        repo = ""
+        branch: str | None = None
+
+        if "://" in s:
+            parsed = urllib.parse.urlparse(s)
+            if "github.com" not in parsed.netloc.lower():
+                raise ValueError("Only GitHub repositories are supported.")
+            parts = [p for p in parsed.path.split("/") if p]
+        else:
+            parts = [p for p in s.split("/") if p]
+
+        if len(parts) < 2:
+            raise ValueError("Use owner/repo or full GitHub repo URL.")
+        owner, repo = parts[0], parts[1]
+        if repo.endswith(".git"):
+            repo = repo[:-4]
+        if len(parts) >= 4 and parts[2] == "tree":
+            branch = "/".join(parts[3:]).strip()
+        if not owner or not repo:
+            raise ValueError("Invalid repository path.")
+        return owner, repo, branch
+
+    @staticmethod
+    def _pkg_http_get_bytes(url: str) -> bytes:
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("User-Agent", "ShellOS-Imager")
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            return resp.read()
+
+    @staticmethod
+    def _pkg_git_clone_url(owner: str, repo: str) -> str:
+        return f"https://github.com/{owner}/{repo}.git"
+
+    @staticmethod
+    def _pkg_git_run(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
+        try:
+            res = subprocess.run(
+                args,
+                cwd=str(cwd) if cwd else None,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            out = (res.stdout or "") + (res.stderr or "")
+            return res.returncode, out.strip()
+        except Exception as e:
+            return -1, str(e)
+
+    def _pkg_github_default_branch(self, owner: str, repo: str) -> str:
+        try:
+            data = self._pkg_http_get_bytes(f"https://api.github.com/repos/{owner}/{repo}")
+            payload = json.loads(data.decode("utf-8", errors="replace"))
+            if isinstance(payload, dict):
+                branch = str(payload.get("default_branch", "")).strip()
+                if branch:
+                    return branch
+        except Exception:
+            pass
+        return "main"
+
+    @staticmethod
+    def _pkg_sha256_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def _pkg_parse_shpkg(shpkg_data: bytes) -> dict[str, bytes]:
+        if len(shpkg_data) < 7 or shpkg_data[:4] != b"SHPK":
+            raise ValueError("Not a valid .shpkg file (missing SHPK header).")
+        version = shpkg_data[4]
+        if version != 0x01:
+            raise ValueError(f"Unsupported .shpkg version: {version}")
+        file_count = int.from_bytes(shpkg_data[5:7], "little")
+        idx = 7
+        files: dict[str, bytes] = {}
+        for _ in range(file_count):
+            if idx + 1 > len(shpkg_data):
+                raise ValueError("Corrupt .shpkg (unexpected EOF on filename length).")
+            name_len = shpkg_data[idx]
+            idx += 1
+            if idx + name_len + 4 > len(shpkg_data):
+                raise ValueError("Corrupt .shpkg (invalid filename block).")
+            name = shpkg_data[idx: idx + name_len].decode("utf-8", errors="replace")
+            idx += name_len
+            data_len = int.from_bytes(shpkg_data[idx: idx + 4], "little")
+            idx += 4
+            if idx + data_len > len(shpkg_data):
+                raise ValueError(f"Corrupt .shpkg (invalid length for '{name}').")
+            files[name] = shpkg_data[idx: idx + data_len]
+            idx += data_len
+        return files
+
+    def _pkg_manifest_from_shpkg(self, shpkg_data: bytes) -> dict[str, object]:
+        files = self._pkg_parse_shpkg(shpkg_data)
+        if "manifest.json" not in files:
+            raise ValueError("Package does not contain manifest.json.")
+        try:
+            manifest = json.loads(files["manifest.json"].decode("utf-8", errors="replace"))
+        except Exception as e:
+            raise ValueError(f"manifest.json is invalid JSON: {e}") from e
+        if not isinstance(manifest, dict):
+            raise ValueError("manifest.json must be an object.")
+        if not str(manifest.get("name", "")).strip():
+            raise ValueError("manifest.json must include package name.")
+        return manifest
+
+    @staticmethod
+    def _pkg_validate_store_manifest(manifest: object) -> tuple[bool, str]:
+        """Validate shellos-package.json metadata required by App Store import."""
+        if not isinstance(manifest, dict):
+            return False, "Store manifest is not a JSON object."
+        required = ["name", "version", "shpkg_file", "sha256"]
+        for key in required:
+            if not str(manifest.get(key, "")).strip():
+                return False, f"Store manifest is missing '{key}'."
+        sha = str(manifest.get("sha256", "")).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", sha):
+            return False, "Store manifest has invalid sha256 (must be 64 hex chars)."
+        return True, ""
+
+    def _pkg_publish_to_github(self) -> None:
+        shpkg = self._pkg_shpkg_deploy.text().strip()
+        repo_link = self._pkg_publish_repo.text().strip()
+        if not shpkg or not Path(shpkg).is_file():
+            QMessageBox.warning(self, APP_NAME, "Select a valid .shpkg file first.")
+            return
+        if not repo_link:
+            QMessageBox.warning(self, APP_NAME, "Enter a GitHub repository to publish to.")
+            return
+        try:
+            owner, repo, branch_hint = self._pkg_parse_repo_link(repo_link)
+        except ValueError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+
+        self._pkg_publish_btn.setEnabled(False)
+        self._pkg_publish_status.setText("Publishing package via local git...")
+        self._pkg_publish_status.setStyleSheet("color: #d97706; font-weight: 600;")
+        self._pkg_log_append(f"Publishing {Path(shpkg).name} to {owner}/{repo} ...")
+
+        def _do_publish() -> None:
+            try:
+                git_ok, git_msg = self._pkg_git_run(["git", "--version"])
+                if git_ok != 0:
+                    raise RuntimeError(f"git is not available: {git_msg}")
+                data = Path(shpkg).read_bytes()
+                pkg_manifest = self._pkg_manifest_from_shpkg(data)
+                pkg_name = str(pkg_manifest.get("name", Path(shpkg).stem)).strip()
+                pkg_version = str(pkg_manifest.get("version", "1.0.0")).strip() or "1.0.0"
+                clone_url = self._pkg_git_clone_url(owner, repo)
+                default_branch = self._pkg_github_default_branch(owner, repo)
+                shpkg_file = Path(shpkg).name
+                sha256 = self._pkg_sha256_bytes(data)
+                store_manifest = {
+                    "name": pkg_name,
+                    "version": pkg_version,
+                    "description": str(pkg_manifest.get("description", "")).strip(),
+                    "author": str(pkg_manifest.get("author", "")).strip(),
+                    "shpkg_file": shpkg_file,
+                    "sha256": sha256,
+                    "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "source_repo": f"https://github.com/{owner}/{repo}",
+                }
+                with tempfile.TemporaryDirectory(prefix="shellos_publish_") as td:
+                    work = Path(td) / f"{owner}_{repo}"
+                    code, out = self._pkg_git_run(["git", "clone", "--depth", "1", clone_url, str(work)])
+                    if code != 0:
+                        raise RuntimeError(f"git clone failed: {out}")
+
+                    branch = branch_hint or default_branch
+                    if branch_hint:
+                        code, out = self._pkg_git_run(["git", "checkout", branch], cwd=work)
+                        if code != 0:
+                            code, out = self._pkg_git_run(["git", "checkout", "-b", branch], cwd=work)
+                            if code != 0:
+                                raise RuntimeError(f"git checkout failed: {out}")
+                    else:
+                        code, out = self._pkg_git_run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=work)
+                        if code == 0 and out:
+                            branch = out.splitlines()[-1].strip()
+
+                    (work / shpkg_file).write_bytes(data)
+                    (work / STORE_MANIFEST_FILENAME).write_text(
+                        json.dumps(store_manifest, indent=2),
+                        encoding="utf-8",
+                    )
+
+                    code, out = self._pkg_git_run(
+                        ["git", "add", shpkg_file, STORE_MANIFEST_FILENAME],
+                        cwd=work,
+                    )
+                    if code != 0:
+                        raise RuntimeError(f"git add failed: {out}")
+
+                    commit_msg = f"Publish package {pkg_name} {pkg_version}"
+                    code, out = self._pkg_git_run(["git", "commit", "-m", commit_msg], cwd=work)
+                    if code != 0 and "nothing to commit" not in out.lower():
+                        raise RuntimeError(f"git commit failed: {out}")
+
+                    code, out = self._pkg_git_run(["git", "push", "origin", branch], cwd=work)
+                    if code != 0:
+                        raise RuntimeError(
+                            "git push failed. Ensure your Git credentials are configured on this machine. "
+                            f"Details: {out}"
+                        )
+
+                share_url = f"https://github.com/{owner}/{repo}/tree/{branch}"
+                self._invoke_main.emit(
+                    partial(
+                        self._pkg_publish_done,
+                        True,
+                        f"[OK] Published {pkg_name} {pkg_version} to {owner}/{repo}@{branch}",
+                        share_url,
+                        {
+                            "repo_url": share_url,
+                            "branch": branch,
+                            "name": pkg_name,
+                            "version": pkg_version,
+                            "sha256": sha256,
+                            "shpkg_file": shpkg_file,
+                        },
+                    )
+                )
+            except Exception as e:
+                self._invoke_main.emit(
+                    partial(
+                        self._pkg_publish_done,
+                        False,
+                        f"Publish failed: {e}",
+                        "",
+                        None,
+                    )
+                )
+
+        threading.Thread(target=_do_publish, daemon=True).start()
+
+    def _pkg_publish_done(
+        self,
+        ok: bool,
+        message: str,
+        share_url: str,
+        recent_entry: dict[str, str] | None,
+    ) -> None:
+        self._pkg_publish_btn.setEnabled(True)
+        if ok:
+            self._pkg_publish_status.setStyleSheet("color: #059669; font-weight: 600;")
+            self._pkg_publish_status.setText(message)
+            self._pkg_log_append(message)
+            self._pkg_log_append(f"Share this repo: {share_url}")
+            self._pkg_import_repo.setText(share_url)
+            if recent_entry is not None:
+                self._pkg_add_recent_repo(recent_entry)
+        else:
+            self._pkg_publish_status.setStyleSheet("color: #dc2626; font-weight: 600;")
+            self._pkg_publish_status.setText(message)
+            self._pkg_log_append(f"[ERR] {message}")
+        self._pkg_store_inputs_changed()
+
+    def _pkg_import_repo_package(self) -> None:
+        repo_link = self._pkg_import_repo.text().strip()
+        if not repo_link:
+            QMessageBox.warning(self, APP_NAME, "Paste a GitHub package repo link first.")
+            return
+        try:
+            owner, repo, branch_hint = self._pkg_parse_repo_link(repo_link)
+        except ValueError as e:
+            QMessageBox.warning(self, APP_NAME, str(e))
+            return
+
+        self._pkg_import_btn.setEnabled(False)
+        self._pkg_store_status.setText("Fetching manifest and verifying package checksum...")
+        self._pkg_store_status.setStyleSheet("color: #d97706; font-weight: 600;")
+        self._pkg_log_append(f"Fetching package from {owner}/{repo} ...")
+
+        def _do_import() -> None:
+            try:
+                candidates: list[str] = []
+                if branch_hint:
+                    candidates.append(branch_hint)
+                else:
+                    candidates.extend([self._pkg_github_default_branch(owner, repo), "main", "master"])
+                seen: set[str] = set()
+                branches: list[str] = []
+                for b in candidates:
+                    if b and b not in seen:
+                        branches.append(b)
+                        seen.add(b)
+
+                manifest: dict | None = None
+                shpkg_data = b""
+                branch = ""
+                last_error = "manifest not found"
+                for cand in branches:
+                    try:
+                        manifest_url = (
+                            f"https://raw.githubusercontent.com/{owner}/{repo}/{cand}/{STORE_MANIFEST_FILENAME}"
+                        )
+                        manifest_bytes = self._pkg_http_get_bytes(manifest_url)
+                        parsed = json.loads(manifest_bytes.decode("utf-8", errors="replace"))
+                        ok_manifest, err_manifest = self._pkg_validate_store_manifest(parsed)
+                        if not ok_manifest:
+                            raise RuntimeError(err_manifest)
+                        shpkg_file = str(parsed.get("shpkg_file", "")).strip()
+                        shpkg_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{cand}/{shpkg_file}"
+                        data = self._pkg_http_get_bytes(shpkg_url)
+                        actual_hash = self._pkg_sha256_bytes(data)
+                        expected_hash = str(parsed.get("sha256", "")).strip().lower()
+                        if actual_hash != expected_hash:
+                            raise RuntimeError(
+                                f"Checksum mismatch for {shpkg_file} (expected {expected_hash}, got {actual_hash})."
+                            )
+                        manifest = parsed
+                        shpkg_data = data
+                        branch = cand
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                        continue
+
+                if manifest is None:
+                    raise RuntimeError(f"Could not fetch/verify package from repo: {last_error}")
+
+                # Validate package internals before enabling upload to board.
+                pkg_manifest = self._pkg_manifest_from_shpkg(shpkg_data)
+                pkg_name = str(pkg_manifest.get("name", manifest.get("name", "package"))).strip() or "package"
+                pkg_version = str(pkg_manifest.get("version", manifest.get("version", "1.0.0"))).strip() or "1.0.0"
+
+                cache_dir = (
+                    Path(tempfile.gettempdir())
+                    / "shellos_imager_store"
+                    / owner
+                    / repo
+                    / branch
+                )
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                shpkg_file = str(manifest.get("shpkg_file", "package.shpkg")).strip() or "package.shpkg"
+                local_path = cache_dir / Path(shpkg_file).name
+                local_path.write_bytes(shpkg_data)
+                share_url = f"https://github.com/{owner}/{repo}/tree/{branch}"
+                self._invoke_main.emit(
+                    partial(
+                        self._pkg_import_done,
+                        True,
+                        f"[OK] Verified {pkg_name} {pkg_version} from {owner}/{repo}@{branch}",
+                        str(local_path),
+                        {
+                            "name": pkg_name,
+                            "version": pkg_version,
+                            "repo_url": share_url,
+                            "branch": branch,
+                            "sha256": actual_hash,
+                            "shpkg_file": Path(shpkg_file).name,
+                        },
+                    )
+                )
+            except Exception as e:
+                self._invoke_main.emit(
+                    partial(
+                        self._pkg_import_done,
+                        False,
+                        f"Import failed: {e}",
+                        "",
+                        None,
+                    )
+                )
+
+        threading.Thread(target=_do_import, daemon=True).start()
+
+    def _pkg_import_done(
+        self, ok: bool, message: str, local_path: str, recent_entry: dict[str, str] | None
+    ) -> None:
+        self._pkg_import_btn.setEnabled(True)
+        if ok and recent_entry is not None:
+            self._pkg_verified_shpkg_path = local_path
+            self._pkg_verified_meta = recent_entry
+            self._pkg_shpkg_deploy.setText(local_path)
+            self._pkg_store_status.setStyleSheet("color: #059669; font-weight: 600;")
+            self._pkg_store_status.setText(message)
+            self._pkg_deploy_status.setStyleSheet("color: #059669; font-weight: 600;")
+            self._pkg_deploy_status.setText(
+                f"Verified package ready: {recent_entry.get('name', '?')} {recent_entry.get('version', '')}"
+            )
+            self._pkg_log_append(message)
+            self._pkg_add_recent_repo(recent_entry)
+        else:
+            self._pkg_verified_shpkg_path = None
+            self._pkg_verified_meta = None
+            self._pkg_store_status.setStyleSheet("color: #dc2626; font-weight: 600;")
+            self._pkg_store_status.setText(message)
+            self._pkg_log_append(f"[ERR] {message}")
+        self._pkg_store_inputs_changed()
 
     def _pkg_ip_changed(self, text: str) -> None:
         self._pkg_settings.setValue("pkg/device_ip", text.strip())
@@ -1444,7 +2046,6 @@ class ShellOSImager(QWidget):
 
         out_dir = str(Path(ino).parent)
         self._pkg_build_btn.setEnabled(False)
-        self._pkg_build_deploy_btn.setEnabled(False)
         self._pkg_deploy_btn.setEnabled(False)
         self._pkg_deploy_status.setText("Building...")
         self._pkg_deploy_status.setStyleSheet("color: #d97706; font-weight: 600;")
@@ -1460,7 +2061,6 @@ class ShellOSImager(QWidget):
 
         def _on_done(code: int, _status: QProcess.ExitStatus) -> None:
             self._pkg_build_btn.setEnabled(True)
-            self._pkg_build_deploy_btn.setEnabled(True)
             self._pkg_deploy_btn.setEnabled(True)
             if code == 0:
                 ino_stem = re.sub(r"\.ino$", "", Path(ino).name, flags=re.IGNORECASE)
@@ -1483,7 +2083,6 @@ class ShellOSImager(QWidget):
         proc.start(find_python(), [str(compiler), "build", ino, "--out", out_dir])
         if not proc.waitForStarted(3000):
             self._pkg_build_btn.setEnabled(True)
-            self._pkg_build_deploy_btn.setEnabled(True)
             self._pkg_deploy_btn.setEnabled(True)
             self._pkg_log_append("ERROR: could not start compiler")
 
@@ -1523,6 +2122,18 @@ class ShellOSImager(QWidget):
         if not _ip:
             QMessageBox.warning(self, APP_NAME, "Enter the device IP address.")
             return
+
+        if self._pkg_verified_shpkg_path:
+            try:
+                verified_match = Path(shpkg).resolve() == Path(self._pkg_verified_shpkg_path).resolve()
+            except Exception:
+                verified_match = shpkg == self._pkg_verified_shpkg_path
+            if verified_match and self._pkg_verified_meta:
+                pkg_name = self._pkg_verified_meta.get("name", Path(shpkg).stem)
+                pkg_version = self._pkg_verified_meta.get("version", "")
+                self._pkg_log_append(
+                    f"[OK] Using verified package source: {pkg_name} {pkg_version}".strip()
+                )
 
         self._pkg_deploy_btn.setEnabled(False)
         self._pkg_deploy_status.setText("Uploading...")
